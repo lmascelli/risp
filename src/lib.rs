@@ -17,7 +17,6 @@ pub use context::LispContext;
 pub use environment::{Env, VARIABLE_DOCUMENTATION};
 pub use error::EvalError;
 pub use eval::{eval, resume_frames};
-#[cfg(test)]
 pub use fuel::measure;
 pub use fuel::{DEFAULT_FUEL, FuelMeter, FuelScope, set_remaining};
 pub use lispexp::LispExp;

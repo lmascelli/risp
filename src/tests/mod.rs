@@ -25,6 +25,8 @@ mod symbol_tests;
 // Thread, concurrency and fuel
 mod fiber_tests;
 mod fuel;
+#[cfg(test)]
+mod perf;
 mod thread_tests;
 mod yield_tests;
 // Handshake

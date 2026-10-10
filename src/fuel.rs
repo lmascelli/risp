@@ -147,7 +147,7 @@ impl FuelMeter {
     /// Set the budget future scopes receive, and top the current thread's
     /// remaining fuel up to it -- so code that knows it will be expensive can
     /// raise its own ceiling as its first act rather than having to restart.
-    #[cfg(test)]
+    /// This is also useful to embedders when configuring a host runtime.
     pub fn set_budget(&self, budget: u32) {
         self.budget.store(budget, Ordering::Relaxed);
         FUEL.set(budget);
@@ -198,14 +198,21 @@ pub fn set_remaining(amount: u32) {
 ///
 /// The thread's real remaining fuel is saved and restored, so measuring cannot
 /// hand the surrounding scope a larger budget than it started with.
-#[cfg(test)]
+struct RestoreFuel(u32);
+
+impl Drop for RestoreFuel {
+    fn drop(&mut self) {
+        FUEL.set(self.0);
+    }
+}
+
 pub fn measure<T, F: FnOnce() -> T>(meter: &FuelMeter, body: F) -> (T, u64) {
-    let saved = FUEL.get();
+    let restore = RestoreFuel(FUEL.get());
     let scope = meter.begin();
     FUEL.set(u32::MAX);
     let value = body();
     let spent = u64::from(u32::MAX - FUEL.get());
     drop(scope);
-    FUEL.set(saved);
+    drop(restore);
     (value, spent)
 }
