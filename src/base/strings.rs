@@ -31,7 +31,25 @@ fn primitive_make_string<T: LispContext>(
     } else {
         0
     };
-    Ok(LispExp::string(String::from(c).repeat(count)))
+    let capacity = count.checked_mul(c.len_utf8()).ok_or_else(|| {
+        EvalError::RuntimeMessage(
+            "make-string: requested size is too large".into(),
+        )
+    })?;
+
+    let mut result = String::new();
+    result.try_reserve_exact(capacity).map_err(|_| {
+        EvalError::RuntimeMessage(
+            "make-string: unable to allocate requested string".into(),
+        )
+    })?;
+
+    for _ in 0..count {
+        result.push(c);
+    }
+
+    Ok(LispExp::string(result))
+    
 }
 
 const CONCAT_DOC: &str = "(concat &rest STRINGS): Concatenate STRINGS into a single \
@@ -68,6 +86,7 @@ fn primitive_string_eq<T: LispContext>(
     ))
 }
 
+
 const STRING_LT_DOC: &str = "(string< STRING1 STRING2): Return t if STRING1 sorts before \
                  STRING2 lexicographically, nil otherwise.\n\n\
                  Example:\n\
@@ -83,6 +102,40 @@ fn primitive_string_lt<T: LispContext>(
     Ok(LispExp::boolean(
         expect_string(&args[0])? < expect_string(&args[1])?,
     ))
+}
+
+const STRING_DIFF_DOC: &str = "(string-diff BEFORE AFTER): Describe the smallest contiguous \
+    replacement changing BEFORE into AFTER, as (START REMOVED REPLACEMENT). START and REMOVED \
+    count Unicode characters. Equal strings return (LENGTH 0 \"\"). Runs in linear time, \
+    for modules recording an edit without comparing growing substrings in a loop.";
+
+fn primitive_string_diff<T: LispContext>(
+    args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
+    ctx: &T,
+) -> Result<LispExp<T>, EvalError<T>> {
+    exact_arity(args, 2)?;
+    let before = expect_string(&args[0])?;
+    let after = expect_string(&args[1])?;
+    ctx.consume_fuel(u32::try_from(before.len().saturating_add(after.len())).unwrap_or(u32::MAX))?;
+    let before: Vec<char> = before.chars().collect();
+    let after: Vec<char> = after.chars().collect();
+    let start = before
+        .iter()
+        .zip(&after)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let suffix = before[start..]
+        .iter()
+        .rev()
+        .zip(after[start..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    Ok(LispExp::proper_list(vec![
+        LispExp::number(start as f64),
+        LispExp::number((before.len() - start - suffix) as f64),
+        LispExp::string(after[start..after.len() - suffix].iter().collect()),
+    ]))
 }
 
 const SUBSTRING_DOC: &str = "(substring STRING &optional START END): Return the substring \
@@ -334,6 +387,7 @@ pub(super) fn install<T: LispContext>(into: &Registry<T>) {
     into.function("concat", primitive_concat, CONCAT_DOC);
     into.function("string=", primitive_string_eq, STRING_EQ_DOC);
     into.function("string<", primitive_string_lt, STRING_LT_DOC);
+    into.function("string-diff", primitive_string_diff, STRING_DIFF_DOC);
     into.function("substring", primitive_substring, SUBSTRING_DOC);
     into.function("upcase", primitive_upcase, UPCASE_DOC);
     into.function("downcase", primitive_downcase, DOWNCASE_DOC);

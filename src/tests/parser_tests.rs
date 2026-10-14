@@ -536,4 +536,42 @@ mod test {
             ])
         );
     }
+
+    #[test]
+    fn misplaced_dots_return_errors() {
+        for source in [".", "(1 . .)", "[.]", "'.", "{k .}"] {
+            assert_eq!(
+                Parser::new(source).next::<()>(),
+                Err(ParserError::UnexpectedDot),
+                "input: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn closing_delimiters_after_prefixes_return_errors() {
+        for (source, delimiter) in [
+            ("(list 'a ')", ")"),
+            ("(a ,)", ")"),
+            ("[1 `]", "]"),
+            ("{k ,@}", "}"),
+        ] {
+            assert_eq!(
+                Parser::new(source).next::<()>(),
+                Err(ParserError::UnexpectedToken(delimiter.into())),
+                "input: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_valid_dotted_pair_still_parses() {
+        assert_eq!(
+            Parser::new("(1 . 2)").next::<()>(),
+            Ok(LispExp::cons(
+                LispExp::number(1.0),
+                LispExp::number(2.0),
+            ))
+        );
+    }
 }

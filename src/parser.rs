@@ -57,6 +57,7 @@ pub enum ParserError {
     InvalidMapKey,
     MapKeyMissingValue,
     UnexpectedDot,
+    UnexpectedToken(String),
     MalformedDottedList,
 }
 
@@ -588,6 +589,15 @@ impl<'source> Parser<'source> {
                         self.list_end = end;
                     }
                     self.advance_token()?;
+
+                    if list.len() == 2
+                       && matches!(
+                           &list[0],
+                           LispExp::Symbol(name) if name.as_str() == "quote"
+                       ) {
+                           list[1] = form_to_data(&list[1]);
+                       }
+                    
                     return Ok(LispExp::form(list));
                 }
                 Token::Dot => {
@@ -745,7 +755,10 @@ impl<'source> Parser<'source> {
                 ]));
             }
             Token::Void => Err(ParserError::VoidExp),
-            _ => unreachable!("token parse not implemented for {:?}", self.current_token),
+            Token::Dot => Err(ParserError::UnexpectedDot),
+            Token::RParen => Err(ParserError::UnexpectedToken(")".into())),
+            Token::RSquared => Err(ParserError::UnexpectedToken("]".into())),
+            Token::RBracket => Err(ParserError::UnexpectedToken("}".into())),
         }
     }
 }

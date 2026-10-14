@@ -382,4 +382,86 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn make_string_rejects_unrepresentable_sizes() {
+        for source in [
+            r#"(make-string 100000000000000000000 "x")"#,
+            r#"(make-string 100000000000000000000 "é")"#,
+        ] {
+            assert!(
+                matches!(eval_err(source), EvalError::RuntimeMessage(_)),
+                "input: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn make_string_preserves_normal_behavior() {
+        for (source, expected) in [
+            (r#"(make-string 3 "x")"#, "xxx"),
+            (r#"(make-string 3 "é")"#, "ééé"),
+            (r#"(make-string 3 "ab")"#, "aaa"),
+            (r#"(make-string 0 "x")"#, ""),
+            (r#"(make-string -2 "x")"#, ""),
+            (r#"(make-string 3 "")"#, ""),
+        ] {
+            assert_eq!(
+                eval_ok(source),
+                LispExp::string(expected.into()),
+                "input: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_and_abbreviated_quote_agree() {
+    for literal in [
+        "()",
+        "(1 2)",
+        "((1 2) (3 4))",
+        "[1 (2 3)]",
+        "{key (1 2)}",
+    ] {
+        let source = format!("(equal '{literal} (quote {literal}))");
+
+        assert_eq!(
+            eval_ok(&source),
+            LispExp::t(),
+            "literal: {literal}"
+        );
+    }
+}
+
+    #[test]
+    fn explicit_quote_returns_list_data() {
+        assert_eq!(
+            eval_ok("(car (quote (1 2)))"),
+            LispExp::number(1.0)
+        );
+        assert_eq!(
+            eval_ok("(listp (quote (1 2)))"),
+            LispExp::t()
+        );
+        assert_eq!(
+            eval_ok("(quote ())"),
+            LispExp::nil()
+        );
+    }
+    
+    #[test]
+    fn quoted_literals_keep_their_identity() {
+        for literal in ["(1 2)", "[1 2]", "{key 1}"] {
+            let source = format!(
+                "(defun quoted () (quote {literal}))
+                 (eq (quoted) (quoted))"
+            );
+    
+            assert_eq!(
+                eval_ok(&source),
+                LispExp::t(),
+                "literal: {literal}"
+            );
+        }
+    }
 }

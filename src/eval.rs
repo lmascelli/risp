@@ -883,11 +883,12 @@ fn eval_special_form_or_call_step<T: LispContext>(
             };
 
             let list_val = eval(&spec[1], env.clone(), ctx)?;
-            let items: Vec<LispExp<T>> = match &list_val {
-                LispExp::Cons(_) => list_val.iter().collect(),
+            
+            match &list_val {
+                LispExp::Cons(_) => (),
                 other => {
                     if other.is_nil() {
-                        vec![]
+                      ()
                     } else {
                         return Err(EvalError::WrongArgumentType {
                             expected: "List".into(),
@@ -900,7 +901,10 @@ fn eval_special_form_or_call_step<T: LispContext>(
             let loop_env = Env::new_child(&env);
             loop_env.set_variable(var_name.clone(), LispExp::nil());
             let body = &args[1..];
-            for item in items {
+            
+            for item in list_val.iter() {
+                ctx.consume_fuel(1)?;
+                
                 loop_env.update_variable(&var_name, item);
                 for e in body {
                     eval(e, loop_env.clone(), ctx)?;
@@ -951,6 +955,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
             let body = &args[1..];
             let mut i = 0;
             while i < count {
+                ctx.consume_fuel(1)?;
                 loop_env.update_variable(&var_name, LispExp::number(i as f64));
                 for e in body {
                     eval(e, loop_env.clone(), ctx)?;
