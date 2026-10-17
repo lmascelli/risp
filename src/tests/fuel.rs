@@ -258,18 +258,18 @@ mod tests {
     fn dotimes_with_empty_body_respects_fuel() {
         let (env, ctx) = fuel_env(10);
         let _scope = ctx.fuel.begin();
-    
+
         assert_eq!(
             eval_script("(dotimes (i 1000))", env, &ctx),
             Err(EvalError::OutOfFuel)
         );
     }
-    
+
     #[test]
     fn dotimes_completes_with_enough_fuel() {
         let (env, ctx) = fuel_env(100);
         let _scope = ctx.fuel.begin();
-    
+
         let result = eval_script(
             "(setq total 0)
              (dotimes (i 3)
@@ -278,7 +278,7 @@ mod tests {
             env,
             &ctx,
         );
-    
+
         assert_eq!(result, Ok(LispExp::number(3.0)));
     }
 
@@ -289,20 +289,20 @@ mod tests {
             "items".into(),
             LispExp::proper_list(vec![LispExp::number(1.0); 1000]),
         );
-    
+
         let _scope = ctx.fuel.begin();
-    
+
         assert_eq!(
             eval_script("(dolist (item items))", env, &ctx),
             Err(EvalError::OutOfFuel)
         );
     }
-    
+
     #[test]
     fn dolist_completes_with_enough_fuel() {
         let (env, ctx) = fuel_env(100);
         let _scope = ctx.fuel.begin();
-    
+
         let result = eval_script(
             "(setq total 0)
              (dolist (item '(1 2 3))
@@ -311,7 +311,7 @@ mod tests {
             env,
             &ctx,
         );
-    
+
         assert_eq!(result, Ok(LispExp::number(6.0)));
     }
 }

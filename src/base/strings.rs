@@ -32,16 +32,12 @@ fn primitive_make_string<T: LispContext>(
         0
     };
     let capacity = count.checked_mul(c.len_utf8()).ok_or_else(|| {
-        EvalError::RuntimeMessage(
-            "make-string: requested size is too large".into(),
-        )
+        EvalError::RuntimeMessage("make-string: requested size is too large".into())
     })?;
 
     let mut result = String::new();
     result.try_reserve_exact(capacity).map_err(|_| {
-        EvalError::RuntimeMessage(
-            "make-string: unable to allocate requested string".into(),
-        )
+        EvalError::RuntimeMessage("make-string: unable to allocate requested string".into())
     })?;
 
     for _ in 0..count {
@@ -49,7 +45,6 @@ fn primitive_make_string<T: LispContext>(
     }
 
     Ok(LispExp::string(result))
-    
 }
 
 const CONCAT_DOC: &str = "(concat &rest STRINGS): Concatenate STRINGS into a single \
@@ -85,7 +80,6 @@ fn primitive_string_eq<T: LispContext>(
         expect_string(&args[0])? == expect_string(&args[1])?,
     ))
 }
-
 
 const STRING_LT_DOC: &str = "(string< STRING1 STRING2): Return t if STRING1 sorts before \
                  STRING2 lexicographically, nil otherwise.\n\n\

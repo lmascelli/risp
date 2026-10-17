@@ -542,7 +542,7 @@ mod test {
         for source in [".", "(1 . .)", "[.]", "'.", "{k .}"] {
             assert_eq!(
                 Parser::new(source).next::<()>(),
-                Err(ParserError::UnexpectedDot),
+                Err(ParserError::UnexpectedToken(".".into())),
                 "input: {source}"
             );
         }
@@ -568,10 +568,66 @@ mod test {
     fn a_valid_dotted_pair_still_parses() {
         assert_eq!(
             Parser::new("(1 . 2)").next::<()>(),
-            Ok(LispExp::cons(
-                LispExp::number(1.0),
-                LispExp::number(2.0),
-            ))
+            Ok(LispExp::cons(LispExp::number(1.0), LispExp::number(2.0),))
         );
+    }
+
+    #[test]
+    fn iterative_reader_handles_end_of_input() {
+        let mut parser = Parser::new("foo");
+
+        assert_eq!(parser.next::<()>(), Ok(LispExp::symbol("foo".into())));
+
+        for _ in 0..3 {
+            assert_eq!(parser.next::<()>(), Err(ParserError::VoidExp));
+        }
+
+        for (source, error) in [
+            ("(foo", ParserError::UnclosedList),
+            ("[foo", ParserError::UnclosedVector),
+            ("{key", ParserError::UnclosedMap),
+            ("{key value", ParserError::UnclosedMap),
+        ] {
+            assert_eq!(
+                Parser::new(source).next::<()>(),
+                Err(error),
+                "input: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn iterative_reader_limits_nesting() {
+        use crate::parser::MAX_READ_DEPTH;
+
+        let allowed = format!(
+            "{}{}",
+            "(".repeat(MAX_READ_DEPTH),
+            ")".repeat(MAX_READ_DEPTH)
+        );
+        assert!(Parser::new(&allowed).next::<()>().is_ok());
+
+        for source in [
+            "(".repeat(100_000),
+            "[".repeat(100_000),
+            "'".repeat(100_000),
+        ] {
+            assert_eq!(Parser::new(&source).next::<()>(), Err(ParserError::TooDeep));
+        }
+    }
+
+    #[test]
+    fn iterative_reader_preserves_quoted_dotted_data() {
+        let expected = LispExp::form(vec![
+            LispExp::symbol("quote".into()),
+            LispExp::cons(
+                LispExp::proper_list(vec![LispExp::number(1.0), LispExp::number(2.0)]),
+                LispExp::number(3.0),
+            ),
+        ]);
+
+        for source in ["'((1 2) . 3)", "(quote ((1 2) . 3))"] {
+            assert_eq!(Parser::new(source).next::<()>(), Ok(expected.clone()));
+        }
     }
 }

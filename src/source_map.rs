@@ -67,7 +67,10 @@ impl SourceMap {
     pub fn record<T: LispContext>(&self, form: &Arc<Vec<LispExp<T>>>, at: Location) {
         let weak = Arc::downgrade(form);
         let weak: Weak<dyn Send + Sync> = weak;
-        let mut table = self.table.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut table = self
+            .table
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if table.forms.len() >= table.sweep_at {
             table.forms.retain(|_, (weak, _)| weak.strong_count() > 0);
             // Twice what is still alive, so a sweep costs a constant amount
@@ -79,7 +82,10 @@ impl SourceMap {
 
     /// Where FORM was read, if it was read in debug mode.
     pub fn locate<T: LispContext>(&self, form: &Arc<Vec<LispExp<T>>>) -> Option<Location> {
-        let table = self.table.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let table = self
+            .table
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let (weak, at) = table.forms.get(&address(form))?;
         (weak.strong_count() > 0).then(|| at.clone())
     }

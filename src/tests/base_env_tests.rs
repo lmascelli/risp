@@ -416,39 +416,20 @@ mod tests {
 
     #[test]
     fn explicit_and_abbreviated_quote_agree() {
-    for literal in [
-        "()",
-        "(1 2)",
-        "((1 2) (3 4))",
-        "[1 (2 3)]",
-        "{key (1 2)}",
-    ] {
-        let source = format!("(equal '{literal} (quote {literal}))");
+        for literal in ["()", "(1 2)", "((1 2) (3 4))", "[1 (2 3)]", "{key (1 2)}"] {
+            let source = format!("(equal '{literal} (quote {literal}))");
 
-        assert_eq!(
-            eval_ok(&source),
-            LispExp::t(),
-            "literal: {literal}"
-        );
+            assert_eq!(eval_ok(&source), LispExp::t(), "literal: {literal}");
+        }
     }
-}
 
     #[test]
     fn explicit_quote_returns_list_data() {
-        assert_eq!(
-            eval_ok("(car (quote (1 2)))"),
-            LispExp::number(1.0)
-        );
-        assert_eq!(
-            eval_ok("(listp (quote (1 2)))"),
-            LispExp::t()
-        );
-        assert_eq!(
-            eval_ok("(quote ())"),
-            LispExp::nil()
-        );
+        assert_eq!(eval_ok("(car (quote (1 2)))"), LispExp::number(1.0));
+        assert_eq!(eval_ok("(listp (quote (1 2)))"), LispExp::t());
+        assert_eq!(eval_ok("(quote ())"), LispExp::nil());
     }
-    
+
     #[test]
     fn quoted_literals_keep_their_identity() {
         for literal in ["(1 2)", "[1 2]", "{key 1}"] {
@@ -456,12 +437,8 @@ mod tests {
                 "(defun quoted () (quote {literal}))
                  (eq (quoted) (quoted))"
             );
-    
-            assert_eq!(
-                eval_ok(&source),
-                LispExp::t(),
-                "literal: {literal}"
-            );
+
+            assert_eq!(eval_ok(&source), LispExp::t(), "literal: {literal}");
         }
     }
 }

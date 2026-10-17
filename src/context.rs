@@ -76,7 +76,7 @@ pub trait LispContext: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'stat
     /// evaluation, all but the last form in a body, and any nested
     /// `eval`/`funcall` performed by a primitive) is captured correctly.
     fn push_call_frame(&self, _frame: &str) {}
-    
+
     /// Pop the most recently pushed frame, undoing one `push_call_frame`.
     fn pop_call_frame(&self) {}
 
@@ -93,11 +93,11 @@ pub trait LispContext: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'stat
     fn call_frame_depth(&self) -> usize {
         0
     }
-    
+
     /// Pop frames until exactly `depth` remain (a no-op if already at or
     /// below `depth`).
     fn truncate_call_frames(&self, _depth: usize) {}
-    
+
     // ------------------------------------------------------------------
     // Debug mode: where an error happened
     // ------------------------------------------------------------------

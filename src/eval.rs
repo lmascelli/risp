@@ -110,12 +110,14 @@ pub fn eval<T: LispContext>(
 #[inline(never)]
 fn note_error_origin<T: LispContext>(exp: &LispExp<T>, error: &EvalError<T>, ctx: &T) {
     match error {
-        EvalError::Throw { .. } | EvalError::Yielded { .. } => { return; }
-        _ => ()
+        EvalError::Throw { .. } | EvalError::Yielded { .. } => {
+            return;
+        }
+        _ => (),
     }
     if let LispExp::Form(form) = exp {
         if let Some(at) = ctx.source_map().and_then(|map| map.locate(form)) {
-                ctx.note_error_origin(&at);
+            ctx.note_error_origin(&at);
         }
     }
 }
@@ -133,7 +135,7 @@ fn note_call_site<T: LispContext>(form: &Arc<Vec<LispExp<T>>>, error: &EvalError
     if let EvalError::Yielded { .. } = error {
         return;
     }
-    
+
     if let Some(at) = ctx.source_map().and_then(|map| map.locate(form)) {
         ctx.note_call_site(&at);
     }
@@ -883,12 +885,12 @@ fn eval_special_form_or_call_step<T: LispContext>(
             };
 
             let list_val = eval(&spec[1], env.clone(), ctx)?;
-            
+
             match &list_val {
                 LispExp::Cons(_) => (),
                 other => {
                     if other.is_nil() {
-                      ()
+                        ()
                     } else {
                         return Err(EvalError::WrongArgumentType {
                             expected: "List".into(),
@@ -901,10 +903,10 @@ fn eval_special_form_or_call_step<T: LispContext>(
             let loop_env = Env::new_child(&env);
             loop_env.set_variable(var_name.clone(), LispExp::nil());
             let body = &args[1..];
-            
+
             for item in list_val.iter() {
                 ctx.consume_fuel(1)?;
-                
+
                 loop_env.update_variable(&var_name, item);
                 for e in body {
                     eval(e, loop_env.clone(), ctx)?;

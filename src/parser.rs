@@ -8,6 +8,58 @@ use super::{LispContext, LispExp, Location, SourceMap};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub(crate) const MAX_READ_DEPTH: usize = 256;
+
+/// The characters of the text, one of lookahead, together with the line and
+/// column of the next one.
+///
+/// It has the two methods the lexer calls on the iterator it replaces, so the
+/// state machine reads exactly as it did; only `next` learned to count.
+struct Source<'source> {
+    chars: std::iter::Peekable<std::str::Chars<'source>>,
+    line: u32,
+    column: u32,
+}
+
+// -----------------------------------------------------------------------------
+//                  Structs necessary to the lexer to locate the code
+// -----------------------------------------------------------------------------
+
+impl<'source> Source<'source> {
+    fn new(text: &'source str, first_line: u32) -> Self {
+        Self {
+            chars: text.chars().peekable(),
+            line: first_line,
+            column: 1,
+        }
+    }
+
+    fn peek(&mut self) -> Option<&char> {
+        self.chars.peek()
+    }
+
+    fn next(&mut self) -> Option<char> {
+        let c = self.chars.next()?;
+        if c == '\n' {
+            self.line += 1;
+            self.column = 1;
+        } else {
+            self.column += 1;
+        }
+        Some(c)
+    }
+}
+
+/// What a parser in debug mode records its forms with.
+struct Located {
+    map: Arc<SourceMap>,
+    file: Arc<str>,
+}
+
+// -----------------------------------------------------------------------------
+//                      Structs necessary to the tokenizer
+// -----------------------------------------------------------------------------
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Token {
     Uninitialized,
@@ -56,51 +108,84 @@ pub enum ParserError {
     UnclosedMap,
     InvalidMapKey,
     MapKeyMissingValue,
-    UnexpectedDot,
     UnexpectedToken(String),
     MalformedDottedList,
+    TooDeep,
 }
 
-/// The characters of the text, one of lookahead, together with the line and
-/// column of the next one.
-///
-/// It has the two methods the lexer calls on the iterator it replaces, so the
-/// state machine reads exactly as it did; only `next` learned to count.
-struct Source<'source> {
-    chars: std::iter::Peekable<std::str::Chars<'source>>,
-    line: u32,
-    column: u32,
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Code,
+    Data,
+    Template,
 }
 
-impl<'source> Source<'source> {
-    fn new(text: &'source str, first_line: u32) -> Self {
-        Self {
-            chars: text.chars().peekable(),
-            line: first_line,
-            column: 1,
+enum Tail<T: LispContext> {
+    Proper,
+    Missing,
+    Value(LispExp<T>),
+}
+
+enum Kind<T: LispContext> {
+    List {
+        items: Vec<LispExp<T>>,
+        tail: Tail<T>,
+        opened: Option<(u32, u32)>,
+    },
+    Vector(Vec<LispExp<T>>),
+    Map {
+        items: HashMap<String, LispExp<T>>,
+        key: Option<String>,
+    },
+    Prefix(&'static str),
+}
+
+struct ReadFrame<T: LispContext> {
+    mode: Mode,
+    kind: Kind<T>,
+}
+
+impl<T: LispContext> ReadFrame<T> {
+    fn child_mode(&self) -> Mode {
+        if self.mode == Mode::Data {
+            return Mode::Data;
+        }
+
+        let head = match &self.kind {
+            Kind::List { items, .. } => match items.first() {
+                Some(LispExp::Symbol(name)) => Some(name.as_str()),
+                _ => None,
+            },
+            Kind::Prefix(name) => Some(*name),
+            _ => None,
+        };
+
+        match head {
+            Some("quote") if self.mode == Mode::Code => Mode::Data,
+            Some("backquote") => Mode::Template,
+            Some("unquote") | Some("unquote-splicing") => Mode::Code,
+            _ => self.mode,
         }
     }
 
-    fn peek(&mut self) -> Option<&char> {
-        self.chars.peek()
-    }
+    fn eof_error(&self) -> ParserError {
+        match &self.kind {
+            Kind::List {
+                tail: Tail::Missing,
+                ..
+            } => ParserError::UnexpectedToken(".".into()),
 
-    fn next(&mut self) -> Option<char> {
-        let c = self.chars.next()?;
-        if c == '\n' {
-            self.line += 1;
-            self.column = 1;
-        } else {
-            self.column += 1;
+            Kind::List {
+                tail: Tail::Value(_),
+                ..
+            } => ParserError::MalformedDottedList,
+
+            Kind::List { .. } => ParserError::UnclosedList,
+            Kind::Vector(_) => ParserError::UnclosedVector,
+            Kind::Map { .. } => ParserError::UnclosedMap,
+            Kind::Prefix(_) => ParserError::VoidExp,
         }
-        Some(c)
     }
-}
-
-/// What a parser in debug mode records its forms with.
-struct Located {
-    map: Arc<SourceMap>,
-    file: Arc<str>,
 }
 
 pub struct Parser<'source> {
@@ -115,7 +200,6 @@ pub struct Parser<'source> {
     /// Where the source stood just after `current_token` was read. Kept only
     /// in debug mode.
     current_end: (u32, u32),
-    list_end: (u32, u32),
 }
 
 /// Convert a form produced by the reader into the data it denotes.
@@ -143,7 +227,6 @@ impl<'source> Parser<'source> {
             lexer_state: ParserLexerState::Default,
             located: None,
             current_end: (1, 1),
-            list_end: (1, 1),
         }
     }
 
@@ -530,6 +613,7 @@ impl<'source> Parser<'source> {
                 return Ok(None);
             }
             ParserLexerState::InSymbol | ParserLexerState::InNumberMinusStart => {
+                self.lexer_state = ParserLexerState::Default;
                 let mut token_string = String::new();
                 core::mem::swap(&mut token_string, &mut self.token);
                 self.source.next();
@@ -547,6 +631,8 @@ impl<'source> Parser<'source> {
                 }
             }
             ParserLexerState::InDotStart => {
+                self.lexer_state = ParserLexerState::Default;
+
                 self.token.clear();
                 return Ok(Some(Token::Dot));
             }
@@ -580,185 +666,239 @@ impl<'source> Parser<'source> {
         Some((line, column - 1))
     }
 
-    fn parse_list<T: LispContext>(&mut self) -> Result<LispExp<T>, ParserError> {
-        let mut list = vec![];
-        while self.current_token != Token::Void {
-            match self.current_token {
-                Token::RParen => {
-                    if let Some(end) = self.paren_position() {
-                        self.list_end = end;
-                    }
-                    self.advance_token()?;
-
-                    if list.len() == 2
-                       && matches!(
-                           &list[0],
-                           LispExp::Symbol(name) if name.as_str() == "quote"
-                       ) {
-                           list[1] = form_to_data(&list[1]);
-                       }
-                    
-                    return Ok(LispExp::form(list));
-                }
-                Token::Dot => {
-                    if list.is_empty() {
-                        return Err(ParserError::UnexpectedDot);
-                    }
-                    self.advance_token()?;
-                    if self.current_token == Token::RParen || self.current_token == Token::Void {
-                        return Err(ParserError::UnexpectedDot);
-                    }
-                    let tail = self.next()?;
-                    if self.current_token != Token::RParen {
-                        return Err(ParserError::MalformedDottedList);
-                    }
-                    self.advance_token()?;
-                    return Ok(LispExp::improper_list(list, tail));
-                }
-                _ => {
-                    list.push(self.next()?);
-                }
-            }
-        }
-        Err(ParserError::UnclosedList)
-    }
-
-    fn parse_vector<T: LispContext>(&mut self) -> Result<LispExp<T>, ParserError> {
-        let mut vec = vec![];
-
-        while self.current_token != Token::Void {
-            match self.current_token {
-                Token::RSquared => {
-                    self.advance_token()?;
-                    return Ok(LispExp::vec(vec));
-                }
-                _ => {
-                    vec.push(self.next()?);
-                }
-            }
-        }
-        Err(ParserError::UnclosedVector)
-    }
-
-    fn parse_map<T: LispContext>(&mut self) -> Result<LispExp<T>, ParserError> {
-        let mut map = HashMap::new();
-        let mut is_key = true;
-        let mut current_key = String::new();
-
-        while self.current_token != Token::Void {
-            if is_key {
-                match &self.current_token {
-                    Token::RBracket => {
-                        self.advance_token()?;
-                        return Ok(LispExp::map(map));
-                    }
-                    Token::Symbol(symbol) => {
-                        is_key = false;
-                        current_key = symbol.clone();
-                        self.advance_token()?;
-                    }
-                    Token::String(string) => {
-                        is_key = false;
-                        current_key = string.clone();
-                        self.advance_token()?;
-                    }
-                    _ => {
-                        return Err(ParserError::InvalidMapKey);
-                    }
-                }
-            } else {
-                match self.current_token {
-                    Token::RBracket => {
-                        return Err(ParserError::MapKeyMissingValue);
-                    }
-                    _ => {
-                        map.insert(current_key.clone(), self.next()?);
-                        is_key = true;
-                    }
-                }
-            }
-        }
-
-        Err(ParserError::UnclosedMap)
-    }
-
     pub fn next<T: LispContext>(&mut self) -> Result<LispExp<T>, ParserError> {
-        match self.current_token.clone() {
-            Token::Symbol(symbol) => {
-                self.advance_token()?;
-                Ok(LispExp::symbol(symbol))
-            }
-            Token::String(string) => {
-                self.advance_token()?;
-                Ok(LispExp::string(string))
-            }
-            Token::Number(number) => {
-                self.advance_token()?;
-                Ok(LispExp::number(number))
-            }
-            Token::LParen => {
-                let opened_at = self.paren_position();
-                self.advance_token()?;
-                let list = self.parse_list()?;
-                if let (Some((line, column)), Some(located), LispExp::Form(form)) =
-                    (opened_at, &self.located, &list) {
-                    let (end_line, end_column) = self.list_end;
-                    located.map.record(form, Location {
-                        file: located.file.clone(),
-                        line,
-                        column,
-                        end_line,
-                        end_column,
-                    });
+        let mut frames: Vec<ReadFrame<T>> = Vec::new();
+        let mut ready: Option<LispExp<T>> = None;
+
+        if self.current_token == Token::Uninitialized {
+            self.advance_token()?;
+        }
+
+        loop {
+            // Loops until it can return a complete expression
+            if let Some(value) = ready.take() {
+                let Some(frame) = frames.last_mut() else {
+                    return Ok(value);
+                };
+
+                match &mut frame.kind {
+                    Kind::Prefix(name) => {
+                        let items = vec![LispExp::symbol((*name).into()), value];
+                        ready = Some(if frame.mode == Mode::Data {
+                            LispExp::proper_list(items)
+                        } else {
+                            LispExp::form(items)
+                        });
+
+                        let _ = frames.pop();
+                    }
+
+                    Kind::List { items, tail, .. } => match tail {
+                        Tail::Proper => items.push(value),
+                        Tail::Missing => *tail = Tail::Value(value),
+                        Tail::Value(_) => {
+                            return Err(ParserError::MalformedDottedList);
+                        }
+                    },
+
+                    Kind::Vector(items) => items.push(value),
+
+                    Kind::Map { items, key } => {
+                        let key = key.take().ok_or(ParserError::InvalidMapKey)?;
+
+                        items.insert(key, value);
+                    }
                 }
-                Ok(list)
+
+                continue;
             }
-            Token::LSquared => {
-                self.advance_token()?;
-                Ok(self.parse_vector()?)
+
+            // Check that after the tail of a dotted list there is a close parens.
+            if matches!(
+                frames.last(),
+                Some(ReadFrame {
+                    kind: Kind::List {
+                        tail: Tail::Value(_),
+                        ..
+                    },
+                    ..
+                })
+            ) && self.current_token != Token::RParen
+            {
+                return Err(ParserError::MalformedDottedList);
             }
-            Token::LBracket => {
-                self.advance_token()?;
-                Ok(self.parse_map()?)
+
+            // Checks that the key of a map is a string or a symbol.
+            if let Some(ReadFrame {
+                kind: Kind::Map { key, .. },
+                ..
+            }) = frames.last_mut()
+            {
+                if key.is_none() {
+                    match &self.current_token {
+                        Token::Symbol(name) | Token::String(name) => {
+                            *key = Some(name.clone());
+                            self.advance_token()?;
+                            continue;
+                        }
+
+                        Token::RBracket | Token::Void => {}
+
+                        _ => return Err(ParserError::InvalidMapKey),
+                    }
+                }
             }
-            Token::Uninitialized => {
-                self.advance_token()?;
-                self.next()
+
+            let mode = frames.last().map_or(Mode::Code, ReadFrame::child_mode);
+
+            match self.current_token.clone() {
+                Token::Void => {
+                    return Err(frames
+                        .last()
+                        .map_or(ParserError::VoidExp, ReadFrame::eof_error));
+                }
+
+                Token::Symbol(name) => {
+                    self.advance_token()?;
+                    ready = Some(LispExp::symbol(name));
+                }
+
+                Token::String(value) => {
+                    self.advance_token()?;
+                    ready = Some(LispExp::string(value));
+                }
+
+                Token::Number(value) => {
+                    self.advance_token()?;
+                    ready = Some(LispExp::number(value));
+                }
+
+                Token::LParen
+                | Token::LSquared
+                | Token::LBracket
+                | Token::Quote
+                | Token::BackQuote
+                | Token::Comma
+                | Token::CommaAt => {
+                    if frames.len() >= MAX_READ_DEPTH {
+                        return Err(ParserError::TooDeep);
+                    }
+
+                    let kind = match self.current_token {
+                        Token::LParen => Kind::List {
+                            items: Vec::new(),
+                            tail: Tail::Proper,
+                            opened: self.paren_position(),
+                        },
+
+                        Token::LSquared => Kind::Vector(Vec::new()),
+
+                        Token::LBracket => Kind::Map {
+                            items: HashMap::new(),
+                            key: None,
+                        },
+
+                        Token::Quote => Kind::Prefix("quote"),
+                        Token::BackQuote => Kind::Prefix("backquote"),
+                        Token::Comma => Kind::Prefix("unquote"),
+                        Token::CommaAt => Kind::Prefix("unquote-splicing"),
+
+                        _ => return Err(ParserError::VoidExp),
+                    };
+
+                    frames.push(ReadFrame { mode, kind });
+                    self.advance_token()?;
+                }
+
+                Token::Dot => {
+                    match frames.last_mut() {
+                        Some(ReadFrame {
+                            kind: Kind::List { items, tail, .. },
+                            ..
+                        }) if !items.is_empty() && matches!(&*tail, Tail::Proper) => {
+                            *tail = Tail::Missing;
+                        }
+
+                        _ => return Err(ParserError::UnexpectedToken(".".into())),
+                    }
+
+                    self.advance_token()?;
+                }
+
+                close @ (Token::RParen | Token::RSquared | Token::RBracket) => {
+                    let spelling = match close {
+                        Token::RParen => ")",
+                        Token::RSquared => "]",
+                        _ => "}",
+                    };
+
+                    let closed = self.paren_position();
+
+                    let frame = frames
+                        .pop()
+                        .ok_or_else(|| ParserError::UnexpectedToken(spelling.into()))?;
+
+                    let value = match frame.kind {
+                        Kind::List {
+                            items,
+                            tail,
+                            opened,
+                        } if close == Token::RParen => {
+                            let value = match tail {
+                                Tail::Missing => {
+                                    return Err(ParserError::UnexpectedToken(".".into()));
+                                }
+
+                                Tail::Value(tail) => LispExp::improper_list(items, tail),
+
+                                Tail::Proper if frame.mode == Mode::Data => {
+                                    LispExp::proper_list(items)
+                                }
+
+                                Tail::Proper => LispExp::form(items),
+                            };
+
+                            if let (
+                                Some((line, column)),
+                                Some((end_line, end_column)),
+                                Some(located),
+                                LispExp::Form(form),
+                            ) = (opened, closed, &self.located, &value)
+                            {
+                                located.map.record(
+                                    form,
+                                    Location {
+                                        file: located.file.clone(),
+                                        line,
+                                        column,
+                                        end_line,
+                                        end_column,
+                                    },
+                                );
+                            }
+
+                            value
+                        }
+
+                        Kind::Vector(items) if close == Token::RSquared => LispExp::vec(items),
+
+                        Kind::Map { items, key } if close == Token::RBracket => {
+                            if key.is_some() {
+                                return Err(ParserError::MapKeyMissingValue);
+                            }
+
+                            LispExp::map(items)
+                        }
+
+                        _ => return Err(ParserError::UnexpectedToken(spelling.into())),
+                    };
+
+                    self.advance_token()?;
+                    ready = Some(value);
+                }
+
+                Token::Uninitialized => self.advance_token()?,
             }
-            Token::Quote => {
-                self.advance_token()?;
-                let quoted = self.next()?;
-                return Ok(LispExp::form(vec![
-                    LispExp::symbol("quote".into()),
-                    form_to_data(&quoted),
-                ]));
-            }
-            Token::BackQuote => {
-                self.advance_token()?;
-                return Ok(LispExp::form(vec![
-                    LispExp::symbol("backquote".into()),
-                    self.next()?,
-                ]));
-            }
-            Token::Comma => {
-                self.advance_token()?;
-                return Ok(LispExp::form(vec![
-                    LispExp::symbol("unquote".into()),
-                    self.next()?,
-                ]));
-            }
-            Token::CommaAt => {
-                self.advance_token()?;
-                return Ok(LispExp::form(vec![
-                    LispExp::symbol("unquote-splicing".into()),
-                    self.next()?,
-                ]));
-            }
-            Token::Void => Err(ParserError::VoidExp),
-            Token::Dot => Err(ParserError::UnexpectedDot),
-            Token::RParen => Err(ParserError::UnexpectedToken(")".into())),
-            Token::RSquared => Err(ParserError::UnexpectedToken("]".into())),
-            Token::RBracket => Err(ParserError::UnexpectedToken("}".into())),
         }
     }
 }
