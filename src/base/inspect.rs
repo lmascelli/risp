@@ -1,22 +1,6 @@
-//! Asking the environment about itself.
-//!
-//! What is bound, in which of the three namespaces, and what every name in
-//! one of them is. The interpreter's half of self-documentation:
-//! `describe-function` is built on these.
+//! Inspect bindings and signatures in the variable, function, and macro namespaces.
 use super::*;
 
-//
-// What a session knows is not a property of the language -- half of it is
-// compiled in and the other half is whatever the loaded modules defined, and
-// both change as the program grows. Anything that writes that list down is
-// writing a snapshot that is wrong by the next commit, so everything here asks
-// instead: a completion source offering a name, an `apropos' searching them,
-// and a help command asking what one of them means.
-//
-// All of it is answerable from an `Env` alone, which is why it lives here
-// rather than beside the editor's own primitives. The rule the file follows:
-// a question an environment can answer is a primitive of this Lisp; a question
-// that needs a buffer is a primitive of whatever is hosting it.
 
 const ALL_FUNCTIONS_DOC: &str = "(all-functions): Return the names of every function visible \
      from the current environment, as a sorted list of strings -- primitives and Lisp \
@@ -138,9 +122,7 @@ fn primitive_function_arglist<T: LispContext>(
         ctx.log_diagnostic(&format!("{} names no function", name.as_str()));
         return Ok(nil!());
     };
-    // A primitive is a Rust function pointer. It has an arity, but no names
-    // to report -- so nil, rather than a made-up list that would read as a
-    // Lisp signature and be wrong about every name in it.
+    // Native function pointers carry no parameter names to report.
     let LispExp::Lambda(lambda) = function else {
         return Ok(nil!());
     };
@@ -156,11 +138,7 @@ fn primitive_function_arglist<T: LispContext>(
     Ok(LispExp::proper_list(parts))
 }
 
-/// Register this module's primitives: asking the environment about itself.
-///
-/// Called by [`super::setup_base_env`]. Here rather than there because a
-/// primitive's name, its implementation and its docstring are one fact in three
-/// pieces, and they were a thousand lines apart.
+/// Register this module's primitives and Lisp docstrings.
 pub(super) fn install<T: LispContext>(into: &Registry<T>) {
     into.function(
         "function-arglist",

@@ -4,7 +4,6 @@ mod tests {
     use crate::{EvalError, LispContext, Parser, eval};
     use std::sync::RwLock;
 
-    // Define a dummy agnostic host context that tracks fuel and logs
     #[derive(Debug)]
     struct MockHostContext {
         pub fuel_remaining: RwLock<u32>,
@@ -45,7 +44,6 @@ mod tests {
             logs: RwLock::new(vec![]),
         };
 
-        // If the core code functions flawlessly, bootstrap finishes successfully
         let env_res = bootstrap_vm(&mut ctx);
         assert!(env_res.is_ok());
         assert!(
@@ -58,24 +56,20 @@ mod tests {
     #[test]
     fn test_fuel_system_stops_infinite_loops() {
         let mut ctx = MockHostContext {
-            fuel_remaining: 100.into(), // Explicitly tight budget
+            fuel_remaining: 100.into(),
             logs: vec![].into(),
         };
 
         let env = bootstrap_vm(&mut ctx).unwrap();
 
-        // A malicious loop script that would normally lock up the thread forever
         let malicious_script = "(while t (setq x 1))";
         let mut parser = Parser::new(malicious_script);
         let ast = parser.next().unwrap();
 
-        // Evaluate the script
         let res = eval(&ast, env, &mut ctx);
 
-        // The stack safely unrolls!
         assert_eq!(res, Err(EvalError::OutOfFuel));
         assert_eq!(*ctx.fuel_remaining.read().unwrap(), 0);
-        // Thread is alive, control is handed back to host safely!
     }
 
     fn quote(name: &str) -> LispExp<MockHostContext> {
@@ -95,11 +89,9 @@ mod tests {
             logs: RwLock::new(vec![]),
         };
 
-        // 1. Setup: Define a list (2 3)
         let initial_list = LispExp::proper_list(vec![LispExp::number(2.0), LispExp::number(3.0)]);
         env.set_variable("my-list".into(), initial_list);
 
-        // 2. Evaluate: (add-to-list 'my-list 1) -> Should prepend 1
         let exp_add_1 = LispExp::form(vec![
             LispExp::symbol("add-to-list".into()),
             quote("my-list"),
@@ -107,7 +99,6 @@ mod tests {
         ]);
         eval(&exp_add_1, env.clone(), &mut ctx).unwrap();
 
-        // Check if 1 was prepended
         let current_list = env.get_variable("my-list").unwrap();
         assert_eq!(
             current_list,
@@ -118,7 +109,6 @@ mod tests {
             ])
         );
 
-        // 3. Evaluate: (add-to-list 'my-list 2) -> Should do nothing (2 exists)
         let exp_add_duplicate = LispExp::form(vec![
             LispExp::symbol("add-to-list".into()),
             quote("my-list"),
@@ -126,7 +116,6 @@ mod tests {
         ]);
         eval(&exp_add_duplicate, env.clone(), &mut ctx).unwrap();
 
-        // Check it remains unmodified
         let unmodified_list = env.get_variable("my-list").unwrap();
         assert_eq!(
             unmodified_list,
@@ -147,11 +136,9 @@ mod tests {
             logs: RwLock::new(vec![]),
         };
 
-        // 1. Setup: Define a list (1 2)
         let initial_list = LispExp::proper_list(vec![LispExp::number(1.0), LispExp::number(2.0)]);
         env.set_variable("my-list".into(), initial_list);
 
-        // 2. Evaluate: (append-to-list 'my-list 3) -> Should append 3
         let exp_append_3 = LispExp::form(vec![
             LispExp::symbol("append-to-list".into()),
             quote("my-list"),
@@ -159,7 +146,6 @@ mod tests {
         ]);
         eval(&exp_append_3, env.clone(), &mut ctx).unwrap();
 
-        // Check if 3 was appended at the end
         let current_list = env.get_variable("my-list").unwrap();
         assert_eq!(
             current_list,
@@ -170,7 +156,6 @@ mod tests {
             ])
         );
 
-        // 3. Evaluate: (append-to-list 'my-list 2) -> Should do nothing
         let exp_append_duplicate = LispExp::form(vec![
             LispExp::symbol("append-to-list".into()),
             quote("my-list"),
@@ -198,7 +183,6 @@ mod tests {
             logs: RwLock::new(vec![]),
         };
 
-        // 1. Setup: Define a list (1 2 3 4 5)
         let initial_list = LispExp::proper_list(vec![
             LispExp::number(1.0),
             LispExp::number(2.0),
@@ -208,7 +192,6 @@ mod tests {
         ]);
         env.set_variable("my-list".into(), initial_list);
 
-        // 2. Evaluate: (remove-from-list 'my-list 2 4)
         let exp_remove = LispExp::form(vec![
             LispExp::symbol("remove-from-list".into()),
             quote("my-list"),
@@ -217,7 +200,6 @@ mod tests {
         ]);
         eval(&exp_remove, env.clone(), &mut ctx).unwrap();
 
-        // Check if 2 and 4 were removed correctly
         let current_list = env.get_variable("my-list").unwrap();
         assert_eq!(
             current_list,
@@ -228,7 +210,6 @@ mod tests {
             ])
         );
 
-        // 3. Evaluate: (remove-from-list 'my-list 99) -> Missing item should be ignored
         let exp_remove_missing = LispExp::form(vec![
             LispExp::symbol("remove-from-list".into()),
             quote("my-list"),

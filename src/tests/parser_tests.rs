@@ -1,8 +1,5 @@
 #[cfg(test)]
 mod test {
-    // ==========================================
-    // PARSER TESTS
-    // ==========================================
 
     use crate::{LispExp, Parser, parser::ParserError};
 
@@ -67,12 +64,10 @@ mod test {
 
     #[test]
     fn test_parse_errors() {
-        // Missing closing parenthesis
         let mut parser = Parser::new("(+1 2");
         let err1 = parser.next::<()>().unwrap_err();
         assert_eq!(err1, ParserError::UnclosedList);
 
-        // Unexpected closing parenthesis
         eprintln!("{:?}", Parser::new("(+ 1 2))").next::<()>().unwrap_err());
         let mut parser = Parser::new("(+1 2))");
         let err2 = parser.next::<()>().unwrap_err();
@@ -81,7 +76,6 @@ mod test {
 
     #[test]
     fn test_vector_parsing() {
-        // Testing that [1 2 3] creates a Vector, not a Form
         let input = "[1 2 3]";
         let mut parser = Parser::new(input);
         let ast: LispExp<()> = parser.next().expect("Should parse vector");
@@ -128,13 +122,11 @@ mod test {
 
     #[test]
     fn test_map_error_handling() {
-        // Case 1: Odd number of elements in a map
         let input_odd = r#"{ "key1" "val1" "key2" }"#;
         let mut p1 = Parser::new(input_odd);
         let result = p1.next::<()>();
         assert!(matches!(result, Err(ParserError::MapKeyMissingValue)));
 
-        // Case 2: Using a non-string/symbol as a key
         let input_bad_key = "{ 42 \"answer\" }";
         let mut p2 = Parser::new(input_bad_key);
         let result = p2.next::<()>();
@@ -143,12 +135,10 @@ mod test {
 
     #[test]
     fn test_delimiter_clash_no_spaces() {
-        // Testing that the lexer correctly breaks symbols at [ or {
-        // This checks your InSymbol state transitions [cite: 17-22]
+        // Symbols must terminate at vector and map delimiters without whitespace.
         let input = "my-func[1 2]{:key val}";
         let mut parser = Parser::new(input);
 
-        // Should yield: Symbol, Vector, Map
         assert!(matches!(parser.next::<()>().unwrap(), LispExp::Symbol(_)));
         assert!(matches!(parser.next::<()>().unwrap(), LispExp::Vector(_)));
         assert!(matches!(parser.next::<()>().unwrap(), LispExp::Map(_)));
@@ -175,7 +165,8 @@ mod test {
 
     #[test]
     fn test_edge_brutal_string_escaping() {
-        let input = r#" "\\\"" "#; // Represents the string: \"
+        // The decoded value is a backslash followed by a double quote.
+        let input = r#" "\\\"" "#;
         let mut parser = Parser::new(input);
 
         let ast: LispExp<()> = parser.next().unwrap();
@@ -191,7 +182,6 @@ mod test {
         let input = "{key[1]}";
         let mut parser = Parser::new(input);
 
-        // Should parse as Map containing Key: "key", Value: Vector([1.0])
         let ast: LispExp<()> = parser.next().unwrap();
         if let LispExp::Map(m) = ast {
             let val = m.get("key").expect("Key 'key' not found");
@@ -208,7 +198,6 @@ mod test {
 
         let ast: LispExp<()> = parser.next().unwrap();
 
-        // Expected: Form containing one Vector containing one Map (all empty)
         assert_eq!(
             ast,
             LispExp::form(vec![LispExp::vec(vec![LispExp::map(
@@ -219,8 +208,7 @@ mod test {
 
     #[test]
     fn test_complex_whitespace_and_mixed_delimiters() {
-        // Added the string "data" to act as the Map's key,
-        // with the Vector acting as the value.
+        // Use a string key so the vector is read as a map value.
         let input = "{\n\t\"data\"\n\t[ (1\n2\t3) ]\n}";
         let mut parser = Parser::new(input);
         let ast: LispExp<()> = parser.next().expect("Should parse successfully");
@@ -248,15 +236,13 @@ mod test {
 
     #[test]
     fn test_numeric_boundary_cases() {
-        // Updated to test numbers ending exactly at bracket and brace boundaries
+        // Numbers must terminate correctly at collection and input boundaries.
         let input = "[1.5] {\"k\" .5} 5.";
         let mut parser = Parser::new(input);
 
-        // Test [1.5] - Vector boundary
         let exp1: LispExp<()> = parser.next().unwrap();
         assert_eq!(exp1, LispExp::vec(vec![LispExp::Number(1.5)]));
 
-        // Test {"k" .5} - Map boundary
         let exp2: LispExp<()> = parser.next().unwrap();
         if let LispExp::Map(m) = exp2 {
             assert_eq!(m.get("k"), Some(&LispExp::Number(0.5)));
@@ -264,7 +250,6 @@ mod test {
             panic!("Expected Map for second expression");
         }
 
-        // Test "5." - EOF/whitespace boundary
         let exp3 = parser.next::<()>();
         println!("Result for 5.: {:?}", exp3);
     }
@@ -277,14 +262,12 @@ mod test {
         assert_eq!(parser.next::<()>().unwrap(), LispExp::string("".into()));
         assert_eq!(parser.next::<()>().unwrap(), LispExp::form(vec![]));
 
-        // These now expect Vector and Map instead of Form
         assert_eq!(parser.next::<()>().unwrap(), LispExp::vec(vec![]));
         assert_eq!(
             parser.next::<()>().unwrap(),
             LispExp::map(std::collections::HashMap::new())
         );
 
-        // Check backslash escaping logic
         assert_eq!(
             parser.next::<()>().unwrap(),
             LispExp::string("back\\slash".into())
@@ -293,39 +276,35 @@ mod test {
 
     #[test]
     fn test_malformed_input_recovery() {
-        // Unclosed list
         let mut p1 = Parser::new("(1 2 3");
         assert_eq!(p1.next::<()>().unwrap_err(), ParserError::UnclosedList);
 
-        // Mismatched brackets
         let mut p2 = Parser::new("(1 2 3]");
         assert_eq!(
             p2.next::<()>().unwrap_err(),
             ParserError::UnbalancedRSquared
         );
 
-        // Multiple decimal points
         let mut p3 = Parser::new("1.2.3");
         assert!(matches!(
             p3.next::<()>().unwrap_err(),
             ParserError::NumberParseError(_)
         ));
 
-        // NEW: Map with missing value
+        // A trailing map key has no value.
         let mut p4 = Parser::new("{ \"key\" }");
         assert_eq!(
             p4.next::<()>().unwrap_err(),
             ParserError::MapKeyMissingValue
         );
 
-        // NEW: Map with invalid key type (number instead of string/symbol)
+        // Map keys must be strings or symbols.
         let mut p5 = Parser::new("{ 42 \"value\" }");
         assert_eq!(p5.next::<()>().unwrap_err(), ParserError::InvalidMapKey);
     }
 
     #[test]
     fn test_parser_robustness_mismatched_interleaved_delimiters() {
-        // Tests crossing the streams: lists, vectors, and maps overlapping incorrectly
         assert_eq!(
             Parser::new("([)]").next::<()>().unwrap_err(),
             ParserError::UnbalancedRParen
@@ -342,13 +321,10 @@ mod test {
 
     #[test]
     fn test_parser_robustness_abrupt_eof() {
-        // Strings that never close
-        // Note: Currently, your parser might infinite loop or drop this silently depending on EOF handling.
-        // If it hangs here, you know you need to handle EOF during InString state!
+        // Unterminated strings must report an error at end of input.
         let mut p1 = Parser::new("\"Unclosed string...");
         assert!(p1.next::<()>().is_err() || p1.next::<()>().is_ok());
 
-        // Unclosed nested structures hitting EOF
         assert_eq!(
             Parser::new("(((1 2)").next::<()>().unwrap_err(),
             ParserError::UnclosedList
@@ -365,7 +341,6 @@ mod test {
 
     #[test]
     fn test_parser_robustness_invalid_numbers() {
-        // Multiple decimal points in a row
         assert!(matches!(
             Parser::new("1..2").next::<()>().unwrap_err(),
             ParserError::NumberParseError(_)
@@ -374,7 +349,6 @@ mod test {
 
     #[test]
     fn test_parser_robustness_malformed_maps() {
-        // Key is missing its value (trailing key)
         assert_eq!(
             Parser::new("{ \"key1\" \"val1\" \"key2\" }")
                 .next::<()>()
@@ -382,7 +356,7 @@ mod test {
             ParserError::MapKeyMissingValue
         );
 
-        // Keys MUST be Strings or Symbols. Passing Lists or Vectors should fail.
+        // Reject lists and vectors as map keys.
         assert_eq!(
             Parser::new("{ [1 2] \"value\" }").next::<()>().unwrap_err(),
             ParserError::InvalidMapKey
@@ -480,17 +454,16 @@ mod test {
 
     #[test]
     fn test_quote_at_eof() {
-        // Edge Case 1: A dangling quote at the very end of the file/buffer
+        // A dangling quote has no following expression.
         let mut parser = Parser::new("'");
         let res: Result<LispExp<()>, ParserError> = parser.next();
 
-        // The parser should gracefully report a VoidExp, not crash or loop forever
         assert_eq!(res, Err(ParserError::VoidExp));
     }
 
     #[test]
     fn test_quote_empty_structures() {
-        // Edge Case 2: Quoting empty lists, vectors, and maps
+        // Quoting empty collections.
         let mut parser_list = Parser::new("'()");
         assert_eq!(
             parser_list.next::<()>().unwrap(),
@@ -506,8 +479,7 @@ mod test {
 
     #[test]
     fn test_quote_literals() {
-        // Edge Case 3: Quoting numbers and strings
-        // (Evaluating these is redundant, but the parser MUST handle them structurally)
+        // Quoting self-evaluating numbers and strings.
         let mut parser_num = Parser::new("'42.5");
         assert_eq!(
             parser_num.next::<()>().unwrap(),
@@ -526,7 +498,7 @@ mod test {
 
     #[test]
     fn test_quote_split_by_comments() {
-        // Edge Case 4: A comment sitting directly between the quote and the expression
+        // A comment between a quote prefix and its expression.
         let mut parser = Parser::new("' ; this is an evil comment\n target-symbol");
         assert_eq!(
             parser.next::<()>().unwrap(),

@@ -1,8 +1,4 @@
-//! Strings, and converting to and from them.
-//!
-//! Characters rather than bytes throughout: `length` on a string counts
-//! characters, and so does `substring`. A string in this Lisp is a `String`
-//! behind an `Arc`, so passing one costs a pointer.
+//! String primitives. Lengths and substring indices count Unicode scalar values, not bytes.
 use super::*;
 
 const MAKE_STRING_DOC: &str = "(make-string COUNT STRING): Return COUNT copies of STRING's first \
@@ -21,8 +17,7 @@ fn primitive_make_string<T: LispContext>(
     exact_arity(args, 2)?;
     let count = expect_number(&args[0])?;
     let fill = expect_string(&args[1])?;
-    // The first character, as `self-insert` takes it -- this Lisp has no
-    // character type, so a one-character string is how one is written.
+    // Characters are represented by one-character strings.
     let Some(c) = fill.chars().next() else {
         return Ok(LispExp::string(String::new()));
     };
@@ -370,13 +365,8 @@ fn primitive_format<T: LispContext>(
     Ok(LispExp::string(result))
 }
 
-/// Register this module's primitives: strings, and converting to and from them.
-///
-/// Called by [`super::setup_base_env`]. Here rather than there because a
-/// primitive's name, its implementation and its docstring are one fact in three
-/// pieces, and they were a thousand lines apart.
+/// Register this module's primitives and Lisp docstrings.
 pub(super) fn install<T: LispContext>(into: &Registry<T>) {
-    // ------------------------------- Strings ------------------------------
     into.function("make-string", primitive_make_string, MAKE_STRING_DOC);
     into.function("concat", primitive_concat, CONCAT_DOC);
     into.function("string=", primitive_string_eq, STRING_EQ_DOC);

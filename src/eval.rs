@@ -1,12 +1,4 @@
-//!
-//! TODO(doc) Add a genaral description of the eval system here
-//!
-
-// ========================================================================== //
-//                           +-----------------------------+
-//                           |  Lisp evaluation functions  |
-//                           +-----------------------------+
-// ========================================================================== //
+//! Expression evaluation, tail calls, and resumable statement continuations.
 
 use super::{
     Env, EvalError, FiberState, Frame, Lambda, LispContext, LispExp, VARIABLE_DOCUMENTATION,
@@ -21,43 +13,15 @@ enum EvalStep<T: LispContext> {
 }
 
 thread_local! {
-    /// Whether the single evaluation about to begin may suspend.
-    ///
-    /// # Why permission rather than prohibition
-    ///
-    /// A `(yield)` is only answerable where the evaluator can say what to come
-    /// back to -- see [`Frame`]. Those places are a short list; the places it
-    /// *cannot* are everything else, and enumerating everything else is a list
-    /// nobody can keep complete. So the short list grants, everything else
-    /// inherits nothing, and a position that has never been taught to record
-    /// cannot accidentally allow a suspension it would then lose.
-    ///
-    /// # Why it is consumed
-    ///
-    /// Permission is for *one* evaluation, and [`eval_step`] takes it the
-    /// moment that evaluation starts. Without that, `(progn (foo (yield)))`
-    /// would let the argument inherit the statement's permission and suspend
-    /// with no record of the half-built call to `foo`. Taking it at the top
-    /// means the grant reaches exactly the form it was given for, and every
-    /// sub-expression starts from nothing.
-    ///
-    /// Tail position is the one exception, and it is not really one: a form
-    /// tail-called from a body has nothing left of that body after it, so
-    /// whatever could have recorded for the body can record for it. The
-    /// permission is put back in [`eval_step`] when a step turns out to be a
-    /// tail call.
-    ///
-    /// Thread-local for the reason the fuel counter is: `(spawn ...)` and the
-    /// editor's worker run the evaluator on other threads, and a shared flag
-    /// would let one thread's statement license another thread's argument.
+    /// One-use permission to suspend the next evaluation on this thread.
+    /// `eval_step` consumes it before evaluating subexpressions, preventing a
+    /// statement's permission from leaking into an argument. Tail calls preserve it.
     static YIELD_PERMITTED: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Allow the next single evaluation on this thread to suspend.
+/// Allow the next evaluation on this thread to suspend.
 ///
-/// Called by the positions that can record a way back -- body statements, the
-/// forms of a `while`, and `resume` itself, which is where a fiber's
-/// evaluation begins.
+/// Only callers that can record a continuation may grant permission.
 pub fn grant_yield_permission() {
     YIELD_PERMITTED.set(true);
 }
@@ -68,6 +32,20 @@ fn take_yield_permission() -> bool {
     YIELD_PERMITTED.replace(false)
 }
 
+/// Evaluate an expression in `env` using host services from `ctx`.
+///
+/// Nonconstant symbols resolve as variables; named calls resolve as special
+/// forms, macros, or functions. Data cons lists are converted to code before
+/// evaluation. Tail calls use a trampoline.
+///
+/// # Errors
+///
+/// Returns [`EvalError`] for invalid forms, failed lookups, rejected fuel charges,
+/// callee failures, or non-local control transfers that escape their enclosing form.
+///
+/// Fuel is charged through [`LispContext::consume_fuel`]; this function does
+/// not open or refill a metered scope. Failed calls may leave host backtrace
+/// frames for the caller to report and clear.
 pub fn eval<T: LispContext>(
     exp: &LispExp<T>,
     env: Arc<Env<T>>,
@@ -91,21 +69,10 @@ pub fn eval<T: LispContext>(
     }
 }
 
-/// Debug mode: tell the host that ERROR is leaving EXP, if EXP is a form
-/// whose place in the source is known.
+/// Report the nearest located form for a failure, innermost first.
 ///
-/// Every evaluation an error passes through calls this on its way out,
-/// innermost first; the host keeps the first location it is given -- see
-/// `LispContext::note_error_origin`. A form with no location (a macro's
-/// expansion, a list built at run time) is skipped, so the error is placed at
-/// the nearest enclosing form that has one.
-///
-/// Only failures are noted. A `throw` and a `yield` leave forms too, but they
-/// are control transfers on their way to whoever expects them, not errors.
-///
-/// `#[cold]` and out of line: it runs only once evaluation has already
-/// failed, and keeping it out of `eval` keeps the loop every evaluation runs
-/// exactly as small as it was.
+/// Unlocated forms are skipped. Throws and yields are control transfers,
+/// so they do not establish an error origin.
 #[cold]
 #[inline(never)]
 fn note_error_origin<T: LispContext>(exp: &LispExp<T>, error: &EvalError<T>, ctx: &T) {
@@ -122,13 +89,8 @@ fn note_error_origin<T: LispContext>(exp: &LispExp<T>, error: &EvalError<T>, ctx
     }
 }
 
-/// Debug mode: tell the host that the call made by FORM failed with ERROR,
-/// leaving its frame standing.
-///
-/// Called right after a call whose frame was pushed has failed -- see
-/// `LispContext::note_call_site`. A `yield` is skipped because a suspended
-/// call pops its frame (see `pop_unless_failed`): there is no frame left to
-/// place.
+/// Record the source location of a failed call whose frame remains pushed.
+/// Suspended calls have already popped their frame and are skipped.
 #[cold]
 #[inline(never)]
 fn note_call_site<T: LispContext>(form: &Arc<Vec<LispExp<T>>>, error: &EvalError<T>, ctx: &T) {
@@ -148,27 +110,17 @@ fn eval_step<T: LispContext>(
 ) -> Result<EvalStep<T>, EvalError<T>> {
     let permitted = take_yield_permission();
     let step = eval_step_permitted(exp, env, ctx, permitted);
-    // A tail call is the same statement continued: the body that granted this
-    // permission has nothing left after the form being tail-called, so the
-    // grant carries across.
+    // A tail call continues the same statement, so its yield permission carries over.
     if permitted && matches!(step, Ok(EvalStep::TailCall(..))) {
         grant_yield_permission();
     }
     step
 }
 
-/// Evaluate FORMS as statements, from INDEX, and hand back the way to finish
-/// them if one of them suspends.
+/// Evaluate statements from `from`, recording a continuation if one yields.
 ///
-/// The single place a `(yield)` becomes a suspension rather than an error, and
-/// therefore the single definition of "statement position": a form whose value
-/// is thrown away, in a block that knows what comes after it. `frame_at`
-/// builds the record for "resume at this index" -- a body says one thing about
-/// that and a `while` says another, and they are otherwise the same loop.
-///
-/// Returns the value of the last form, which matters only to a caller that is
-/// finishing a suspension: inside the evaluator the last form is tail-called
-/// instead, and never reaches here.
+/// `frame_at` records the next statement in a body or loop. Returns the last
+/// value, or `carried` when there are no statements left.
 fn run_statements<T: LispContext, F>(
     forms: &[LispExp<T>],
     from: usize,
@@ -181,13 +133,7 @@ fn run_statements<T: LispContext, F>(
 where
     F: Fn(usize) -> Frame<T>,
 {
-    // CARRIED is what the block is worth if it has nothing left to run, which
-    // is the ordinary case while a suspension is being finished: the form that
-    // yielded was this block's last, so the block's value is whatever the
-    // frames inside it produced. Starting from nil instead throws that away --
-    // `(fiber (progn (yield) 7))` answered nil on its second resume, because
-    // the outer block, having nothing left to do, said so over the top of the
-    // 7 that had just been computed inside it.
+    // An empty outer block must preserve the value produced by resumed inner frames.
     let mut last = carried;
     for (index, form) in forms.iter().enumerate().skip(from) {
         if permitted {
@@ -196,8 +142,7 @@ where
         match eval(form, env.clone(), ctx) {
             Ok(value) => last = value,
             Err(EvalError::Yielded { value, mut frames }) => {
-                // Pushed after whatever the inner blocks pushed, so the list
-                // stays innermost first.
+                // Append outer continuations after inner ones to preserve resumption order.
                 frames.push(frame_at(index + 1));
                 return Err(EvalError::Yielded { value, frames });
             }
@@ -207,12 +152,7 @@ where
     Ok(last)
 }
 
-/// Evaluate a body: every form but the last for effect, the last as a tail
-/// call.
-///
-/// The shape `progn`, `let`, `when`, a `cond` clause and a function body all
-/// had written out separately. One copy, so that "a statement may suspend"
-/// became true of all of them at once rather than five times over.
+/// Evaluate all but the last body form as statements; return the last as a tail call.
 fn eval_body_step<T: LispContext>(
     body: &[LispExp<T>],
     env: Arc<Env<T>>,
@@ -229,8 +169,6 @@ fn eval_body_step<T: LispContext>(
         &env,
         ctx,
         permitted,
-        // Nothing is being finished here: this is a body running for the first
-        // time, and an empty one is worth nil.
         LispExp::nil(),
         |resume_from| Frame::Body {
             forms: forms.to_vec(),
@@ -241,16 +179,17 @@ fn eval_body_step<T: LispContext>(
     Ok(EvalStep::TailCall(last.clone(), env))
 }
 
-/// Finish a suspended fiber: run each recorded block from where it stopped,
-/// innermost first, until the program either finishes or suspends again.
+/// Resume recorded blocks, innermost first, until completion or another yield.
 ///
-/// # Why the outer blocks are carried forward
+/// If a block yields again, append the unvisited outer frames to the new
+/// continuation. An empty stack returns nil. This consumes the supplied stack
+/// without updating any fiber object or refilling fuel.
 ///
-/// Resuming one block can suspend again -- a loop that yields every iteration
-/// does exactly that -- and the blocks *outside* it have not been reached yet.
-/// They are still the way back, so they are appended to the new suspension
-/// rather than lost; without that, a worker written as a loop would escape its
-/// own loop the second time it yielded.
+/// # Errors
+///
+/// Returns [`EvalError::Yielded`] with the new value and frames on suspension,
+/// or propagates an evaluation failure. Prefer invoking the Lisp `resume`
+/// function through [`crate::call_callable`] to update a fiber's stored state.
 pub fn resume_frames<T: LispContext>(
     frames: Vec<Frame<T>>,
     ctx: &T,
@@ -259,9 +198,6 @@ pub fn resume_frames<T: LispContext>(
     let mut outer = frames.into_iter();
     while let Some(frame) = outer.next() {
         let finished = match frame {
-            // What the frames inside this one came to is carried in: a block
-            // whose last form was the one that yielded has nothing left to
-            // run, and is worth exactly that.
             Frame::Body { forms, from, env } => {
                 run_statements(&forms, from, &env, ctx, true, last.clone(), |resume_from| {
                     Frame::Body {
@@ -290,12 +226,7 @@ pub fn resume_frames<T: LispContext>(
     Ok(last)
 }
 
-/// A `while` loop, entered part-way through an iteration at FROM.
-///
-/// The one function both the special form and a resumed suspension go through,
-/// so that a loop that has been interrupted behaves exactly like one that
-/// never was: the interrupted iteration is finished, and then the condition is
-/// tested again as usual.
+/// Finish the interrupted `while` iteration from `from`, then retest the condition.
 fn run_while<T: LispContext>(
     condition: &LispExp<T>,
     forms: &[LispExp<T>],
@@ -312,12 +243,10 @@ fn run_while<T: LispContext>(
     };
     let mut last = run_statements(forms, from, env, ctx, true, carried, frame_at)?;
     loop {
-        // The condition is not a statement: there is nowhere to come back to
-        // in the middle of deciding whether to go round again.
+        // A condition cannot yield because no continuation records a partial test.
         if eval(condition, env.clone(), ctx)?.is_nil() {
             return Ok(last);
         }
-        // A fresh iteration, so nothing is carried into it.
         last = run_statements(forms, 0, env, ctx, true, LispExp::nil(), frame_at)?;
     }
 }
@@ -339,11 +268,6 @@ fn eval_step_permitted<T: LispContext>(
         LispExp::Primitive { pointer: _, doc: _ } => Ok(EvalStep::Done(exp.clone())),
 
         LispExp::Symbol(symbol) => {
-            // `nil`, `t` and keyword symbols (`:foo`) are
-            // self-evaluating : they always evaluate to themselves
-            // regardless of what is (or isn't) bound in the
-            // environment. The same is valid for constant symbol
-            // (i.e. those starting with :)
             if symbol.as_str() == "nil" || symbol.as_str() == "t" || symbol.starts_with(':') {
                 return Ok(EvalStep::Done(exp.clone()));
             }
@@ -358,8 +282,6 @@ fn eval_step_permitted<T: LispContext>(
 
         LispExp::Form(list) => {
             if list.is_empty() {
-                // `()` evaluates to the empty list, which is `nil` -- there
-                // is no longer a second representation of it to return.
                 Ok(EvalStep::Done(LispExp::nil()))
             } else {
                 let head = &list[0];
@@ -381,7 +303,6 @@ fn eval_step_permitted<T: LispContext>(
                     }
 
                     LispExp::Lambda(lambda) => {
-                        // Directly eval the lambda with the arguments
                         let mut evaled_args = Vec::new();
                         for arg in &list[1..] {
                             evaled_args.push(eval(arg, env.clone(), ctx)?);
@@ -420,23 +341,7 @@ fn eval_step_permitted<T: LispContext>(
     }
 }
 
-/// Leave a called function's backtrace frame, unless it is the frame a
-/// backtrace is being kept *for*.
-///
-/// # The three ways a body ends, and why they are not two
-///
-/// Finishing normally pops, and so does tail-calling the last form -- the
-/// frame's work is done either way. A genuine error leaves it pushed, which is
-/// the whole point of the call stack: it is what `report-error` prints, and a
-/// function that popped on the way out would be missing from the report of its
-/// own failure.
-///
-/// Suspending is the third, and it goes with the first two. A fiber stopped
-/// inside a function is not *calling* it any more -- it is not calling
-/// anything, it is parked -- and leaving the frame pushed would make every
-/// yield grow the backtrace by one entry that never comes off. Where the fiber
-/// actually is, is recorded in the suspension, which carries this same call
-/// frame's environment.
+/// Pop successful, tail-called, or suspended calls; retain failed calls for backtraces.
 fn pop_unless_failed<T: LispContext>(ctx: &T, step: &Result<EvalStep<T>, EvalError<T>>) {
     if !matches!(step, Err(error) if !matches!(error, EvalError::Yielded { .. })) {
         ctx.pop_call_frame();
@@ -489,23 +394,12 @@ fn eval_special_form_or_call_step<T: LispContext>(
             let condition = &args[0];
             let body = &args[1..];
 
-            // Every form of a loop body is a statement -- the value of an
-            // iteration is thrown away -- so every one of them is somewhere a
-            // `(yield)` can stop, and the loop is the shape a worker is
-            // written in. `run_while` is the same code a resumed suspension
-            // goes back into, so an interrupted loop and an uninterrupted one
-            // cannot drift apart.
-            //
-            // The condition is evaluated first, before anything is granted
-            // permission: a loop that yields before its first test would have
-            // nothing to resume into.
+            // Every loop-body form may yield; the condition cannot record a continuation.
             if eval(condition, env.clone(), ctx)?.is_nil() {
                 return Ok(EvalStep::Done(LispExp::nil()));
             }
             if !permitted {
-                // Nowhere to record a way back to, so the body runs as it
-                // always did and a `(yield)` inside it is refused rather than
-                // being recorded against a loop nobody can re-enter.
+                // This loop has no resumable frame, so its body cannot yield.
                 let mut last_result = LispExp::nil();
                 loop {
                     for exp in body {
@@ -541,9 +435,6 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 let mut thread_ctx = ctx.clone();
 
                 std::thread::spawn(move || {
-                    // Metering state is thread-local, so this thread starts on
-                    // the compile-time default rather than the host's configured
-                    // budget until it is told otherwise.
                     thread_ctx.begin_thread_evaluation();
                     let thread_frame = Env::new_child(&lambda_clone.env);
                     for exp in &lambda_clone.body {
@@ -563,18 +454,12 @@ fn eval_special_form_or_call_step<T: LispContext>(
             }
         }
 
-        // (yield &optional VALUE) -- stop here, hand VALUE to whoever called
-        // `resume`, and come back to this spot the next time they do.
         "yield" => {
-            // Checked before VALUE is evaluated, so a yield somewhere
-            // impossible does not run half of its own arguments first.
+            // Reject unsupported yields before evaluating their argument to avoid partial effects.
             if !permitted {
                 return Err(EvalError::YieldNotAllowed);
             }
             let value = match args.first() {
-                // Evaluated with the permission already taken, which is right:
-                // the value is an argument, and an argument is not a place to
-                // stop.
                 Some(form) => eval(form, env, ctx)?,
                 None => LispExp::nil(),
             };
@@ -591,11 +476,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                     is_done: true,
                 })));
             }
-            // One frame, holding the whole body: a fiber that has not been
-            // started yet is a fiber suspended before its first form, which
-            // is a position like any other. A child environment, so the
-            // variables it binds are its own and do not leak into whatever
-            // made it.
+            // Capture the starting position and lexical environment in the same frame.
             Ok(EvalStep::Done(LispExp::fiber(FiberState {
                 pending: vec![Frame::Body {
                     forms: args.to_vec(),
@@ -632,8 +513,6 @@ fn eval_special_form_or_call_step<T: LispContext>(
             Ok(EvalStep::Done(value))
         }
 
-        // (defun NAME (REQUIRED... [&optional OPTIONAL...] [&rest REST])
-        //   [DOCSTRING] BODY...)
         "defun" => {
             if args.len() < 3 {
                 return Err(EvalError::DefunNotCorrectExpression);
@@ -670,7 +549,6 @@ fn eval_special_form_or_call_step<T: LispContext>(
             }
         }
 
-        // (lambda (REQUIRED... [&optional OPTIONAL...] [&rest REST]) BODY...)
         "lambda" => {
             if args.is_empty() {
                 return Err(EvalError::DefunNotCorrectExpression);
@@ -749,8 +627,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
             eval_body_step(&args[1..], let_env, ctx, permitted)
         }
 
-        // Like `let`, but each binding is evaluated (and immediately visible
-        // to subsequent bindings) in sequence rather than in parallel.
+        // `let*` evaluates each initializer with the preceding bindings already visible.
         "let*" => {
             if args.is_empty() {
                 Err(EvalError::LetNoBindingsProvided)
@@ -861,7 +738,6 @@ fn eval_special_form_or_call_step<T: LispContext>(
             }
         }
 
-        // (dolist (VAR LIST-FORM [RESULT-FORM]) BODY...)
         "dolist" => {
             if args.is_empty() {
                 return Err(EvalError::WrongNumberOfArguments {
@@ -920,7 +796,6 @@ fn eval_special_form_or_call_step<T: LispContext>(
             }
         }
 
-        // (dotimes (VAR COUNT-FORM [RESULT-FORM]) BODY...)
         "dotimes" => {
             if args.is_empty() {
                 return Err(EvalError::WrongNumberOfArguments {
@@ -972,24 +847,9 @@ fn eval_special_form_or_call_step<T: LispContext>(
             }
         }
 
-        // (defvar NAME [VALUE [DOCSTRING]])
-        //
-        // `defvar` only seeds the variable the first time it runs (a
-        // later evaluation of the same `defvar` form is a no-op);
-        // `defconst` always (re)initializes it.
-        //
-        // # Why the docstring does not follow that rule
-        //
-        // The value rule exists so that re-loading a module does not throw
-        // away a setting the user has since changed. A docstring is not a
-        // setting -- it describes the definition in front of you -- so it is
-        // stored every time, and editing one and re-evaluating the file shows
-        // the new text rather than the text from the first load.
-        //
-        // It is taken literally, never evaluated, exactly as `defun' takes
-        // its own; and it goes on the *symbol*, under
-        // [`VARIABLE_DOCUMENTATION`], not on the binding, so a `let' that
-        // shadows the variable does not shadow what it means.
+        // `defvar` preserves existing values; `defconst` always initializes.
+        // Explicit docstrings replace the global property even if the value is preserved;
+        // omitting a docstring leaves the previous property intact.
         "defvar" | "defconst" => {
             if args.is_empty() {
                 Err(EvalError::DefvarNameMustBeASymbol)
@@ -999,10 +859,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 } else {
                     return Err(EvalError::DefunNameMustBeASymbol);
                 };
-                // Checked before anything is stored, so a malformed form
-                // takes effect nowhere rather than half-way: a docstring
-                // that was quietly dropped is the whole reason this arm
-                // reads past the value at all.
+                // Validate the definition before storing a property or evaluating its initializer.
                 if args.len() > 3 {
                     return Err(EvalError::WrongNumberOfArguments {
                         expected: 3,
@@ -1027,8 +884,6 @@ fn eval_special_form_or_call_step<T: LispContext>(
             }
         }
 
-        // (unwind-protect BODYFORM CLEANUP...) always runs CLEANUP, whether
-        // BODYFORM returned normally or raised an error.
         "unwind-protect" => {
             if args.is_empty() {
                 Err(EvalError::WrongNumberOfArguments {
@@ -1037,10 +892,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 })
             } else {
                 let body_result = eval(&args[0], env.clone(), ctx);
-                // Where the failure happened, so the cleanup forms can be
-                // unwound back to it. A failed body leaves its frames standing
-                // on purpose -- that is what `backtrace` reads -- but the
-                // cleanup's own frames are not part of the failure.
+                // Preserve the body's failure frames while discarding cleanup frames.
                 let depth_after_body = ctx.call_frame_depth();
 
                 let run_cleanups = || {
@@ -1065,11 +917,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 
                 ctx.truncate_call_frames(depth_after_body);
 
-                // When both the body and a cleanup failed, the body's error is
-                // the one that explains what went wrong; the cleanup's is
-                // logged rather than silently dropped. Previously the `?` on
-                // the cleanup discarded the body's error entirely, which made
-                // a runaway loop indistinguishable from a broken cleanup.
+                // Preserve the body's error if cleanup also fails; log the cleanup error.
                 match (body_result, cleanup_error) {
                     (Err(body), Some(cleanup)) => {
                         ctx.log_diagnostic(&format!(
@@ -1084,9 +932,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
             }
         }
 
-        // (catch TAG BODY...) evaluates TAG, then BODY in order, returning the
-        // last body value -- unless a `(throw TAG VALUE)` with a matching tag
-        // unwinds through it, in which case it returns VALUE instead.
+        // Keep the protected body inside this Rust frame so throws can reach its catch.
         "catch" => {
             if args.is_empty() {
                 return Err(EvalError::WrongNumberOfArguments {
@@ -1098,10 +944,8 @@ fn eval_special_form_or_call_step<T: LispContext>(
             let depth_before = ctx.call_frame_depth();
             let mut result = LispExp::nil();
             for form in &args[1..] {
-                // Evaluated here rather than handed back as a `TailCall`: the
-                // trampoline would run the form *outside* this Rust frame and
-                // the throw would sail straight past. The price is that a
-                // `catch` is not tail-call transparent, as in real Elisp.
+                // Evaluate inside this frame so it can catch throws;
+                // a tail call would escape the catch.
                 match eval(form, env.clone(), ctx) {
                     Ok(value) => result = value,
                     Err(EvalError::Throw { tag: thrown, value }) => {
@@ -1109,7 +953,6 @@ fn eval_special_form_or_call_step<T: LispContext>(
                             ctx.truncate_call_frames(depth_before);
                             return Ok(EvalStep::Done(value));
                         }
-                        // Another catch's tag: keep unwinding, payload intact.
                         return Err(EvalError::Throw { tag: thrown, value });
                     }
                     Err(err) => return Err(err),
@@ -1118,9 +961,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
             Ok(EvalStep::Done(result))
         }
 
-        // (condition-case VAR BODY-FORM HANDLER...) where each HANDLER is
-        // (CONDITION HANDLER-BODY...). VAR, unless nil, is bound in the handler
-        // to (CONDITION-SYMBOL . DATA), as in Emacs.
+        // Each handler is `(CONDITION BODY...)`; bind non-nil VAR to `(CONDITION . DATA)`.
         "condition-case" => {
             if args.len() < 2 {
                 return Err(EvalError::WrongNumberOfArguments {
@@ -1135,12 +976,10 @@ fn eval_special_form_or_call_step<T: LispContext>(
             };
 
             let depth_before = ctx.call_frame_depth();
-            // Same reason as `catch`: the protected form must run inside this
-            // Rust frame for the handlers to see its failure at all.
+            // The protected evaluation must remain inside this frame to reach its handlers.
             let err = match eval(&args[1], env.clone(), ctx) {
                 Ok(value) => return Ok(EvalStep::Done(value)),
-                // A throw is a control transfer, not a failure. It belongs to
-                // whichever `catch` named its tag and passes through untouched.
+                // Throws bypass condition handlers and continue to the matching catch.
                 Err(throw @ EvalError::Throw { .. }) => return Err(throw),
                 Err(err) => err,
             };
@@ -1155,9 +994,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                     continue;
                 }
 
-                // The protected form died partway and left its frames standing;
-                // drop them now the failure is handled, or they surface in the
-                // next unrelated backtrace.
+                // Discard the handled failure's frames before another evaluation can fail.
                 ctx.truncate_call_frames(depth_before);
 
                 let handler_env = Env::new_child(&env);
@@ -1173,8 +1010,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 for form in &clause[1..clause.len() - 1] {
                     eval(form, handler_env.clone(), ctx)?;
                 }
-                // Nothing is protected any more, so the handler's last form can
-                // go back to the trampoline.
+                // The handler runs outside protection, so its final form can be tail-called.
                 return Ok(EvalStep::TailCall(
                     clause[clause.len() - 1].clone(),
                     handler_env,
@@ -1183,12 +1019,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
             Err(err)
         }
 
-        // (defmacro NAME (REQUIRED... [&optional OPTIONAL...] [&rest REST])
-        //   BODY...) defines a macro in its own namespace. Unlike `defun`,
-        // the arguments are never evaluated: they are bound to the raw,
-        // unevaluated call-site AST, and the macro body must produce a
-        // new expression to be evaluated in place of the call. The same
-        // `&optional`/`&rest` grammar as `defun`/`lambda` applies here.
+        // Bind unevaluated syntax; evaluate the expansion in the caller's environment.
         "defmacro" => {
             if args.len() < 2 {
                 Err(EvalError::DefunNotCorrectExpression)
@@ -1215,10 +1046,8 @@ fn eval_special_form_or_call_step<T: LispContext>(
             }
         }
 
-        // The `backquote`/`` ` `` reader macro: builds a template where
-        // `,`/`unquote` splices in a single evaluated value and
-        // `,@`/`unquote-splicing` splices in the elements of an evaluated
-        // list. Only a single level of backquote nesting is supported.
+        // Backquote supports one nesting level; comma inserts a value and comma-at
+        // splices a list into the template.
         "backquote" => {
             if args.len() != 1 {
                 Err(EvalError::BackquoteNotOneArgument)

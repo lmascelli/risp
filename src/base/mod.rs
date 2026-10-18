@@ -1,41 +1,7 @@
-//! The primitives every program in this Lisp has, whatever host it runs in.
+//! Host-independent Lisp primitives, grouped by domain.
 //!
-//! # What belongs here, and what does not
-//!
-//! A primitive belongs here when it would mean the same thing in a Lisp with no
-//! editor behind it: `car`, `+`, `length`, `funcall`. One that needs a buffer, a
-//! window, point or a keymap is an *editor* primitive and belongs in
-//! `crate::primitives` -- the test is whether the implementation can be written
-//! against `T: LispContext` without knowing what `T` is.
-//!
-//! The split is enforced, not merely described: `tests::layering_tests` fails if
-//! anything under `lisp/` so much as names an editor type.
-//!
-//! # How to find a primitive
-//!
-//! By what it is about. One file per kind, and the file's own doc says which
-//! kind:
-//!
-//! | file | what is in it |
-//! |------|---------------|
-//! | [`functions`] | calling, evaluating, `throw` and `signal` |
-//! | [`inspect`] | what is bound, and in which namespace |
-//! | [`symbols`] | symbols and their properties |
-//! | [`lists`] | cons cells and everything made of them |
-//! | [`predicates`] | equality, and asking what something is |
-//! | [`math`] | arithmetic |
-//! | [`comparisons`] | ordering numbers |
-//! | [`strings`] | strings, and converting to and from them |
-//! | [`atoms`] | the one mutable thing that crosses a thread |
-//! | [`fibers`] | work that can be put down and picked up |
-//!
-//! This file holds what the ten have in common: the macros that generate the
-//! repetitive shapes, the helpers that read an argument, and
-//! [`setup_base_env`], which is the list of the ten and nothing else.
-//!
-//! It was one file of 2,790 lines with those ten as comment banners, and a
-//! 389-line registration block at the bottom that named every primitive a
-//! second time.
+//! Shared macros and argument helpers live here; each submodule registers its
+//! own implementations and Lisp docstrings through [`setup_base_env`].
 
 use crate::{
     Env, EvalError, LispContext, LispExp, Parser, VARIABLE_DOCUMENTATION, bind_lambda_args, eval,
@@ -50,17 +16,7 @@ macro_rules! nil {
 }
 use crate::{LispPrimitive, SharedAtom};
 
-//
-// Four shapes that recur often enough that the three-line signature every
-// primitive must carry was most of what the functions below contained. Each
-// macro leaves exactly one thing at the call site -- the predicate's pattern,
-// the operation's method -- so that what distinguishes two primitives is the
-// only thing written about them.
-//
-// Macros rather than higher-order functions because a primitive is a `fn`
-// pointer, not a closure: `LispExp::primitive` takes a bare function, so the
-// four arguments and the return type have to be spelled out somewhere, and a
-// factory returning `impl Fn` could not be registered.
+// Generate function items because primitives are registered as bare function pointers.
 
 /// A primitive answering t or nil for one argument's shape.
 macro_rules! predicate {
@@ -74,8 +30,6 @@ macro_rules! predicate {
             Ok(LispExp::boolean(matches!(&args[0], $pattern)))
         }
     };
-    // `atom' is `consp' inverted, and saying so is better than a second copy
-    // whose only difference is a `!' easily lost while reading.
     ($name:ident, not $pattern:pat) => {
         fn $name<T: LispContext>(
             args: &[LispExp<T>],
@@ -177,30 +131,14 @@ fn expect_number<T: LispContext>(exp: &LispExp<T>) -> Result<f64, EvalError<T>> 
     }
 }
 
-/// Materialise a data list into a vector.
-///
-/// Walking a cons chain into a `Vec` is O(n), exactly what the previous
-/// `Form(l) => (**l).clone()` cost -- it copied the whole backing vector
-/// too. So every caller keeps the complexity it already had, and the ones
-/// that want the O(1) chain (`car`, `cdr`, `cons`) simply do not call
-/// this. Tightening the remaining callers to walk the chain in place is a
-/// separate, independently testable change.
-/// Charge the host for `units` of work, saturating rather than wrapping on the
-/// (unreachable in practice) list longer than `u32::MAX`.
+/// Charge the host for `units` of work, saturating at `u32::MAX`.
 fn charge<T: LispContext>(ctx: &T, units: usize) -> Result<(), EvalError<T>> {
     ctx.consume_fuel(u32::try_from(units).unwrap_or(u32::MAX))
 }
 
-/// Collect a list argument into a vector, charging one unit per element.
+/// Collect a list argument into a vector, charging one fuel unit per element.
 ///
-/// The evaluator charges one unit per *reduction step*, which is the right
-/// model for a step-shaped interpreter but silently mis-prices primitives that
-/// walk their argument: `(length lst)` is one step whether the list holds three
-/// elements or a hundred thousand. That made the budget bound the number of
-/// steps rather than the amount of work, so `(while t (length big-list))`
-/// burned its whole budget over minutes instead of milliseconds. Charging per
-/// element restores the invariant the budget is supposed to provide -- that a
-/// runaway command is stopped in bounded *time*.
+/// Charges the proper prefix after collection; a dotted tail is ignored.
 fn expect_list<T: LispContext>(exp: &LispExp<T>, ctx: &T) -> Result<Vec<LispExp<T>>, EvalError<T>> {
     match exp {
         LispExp::Cons(_) => {
@@ -216,8 +154,7 @@ fn expect_list<T: LispContext>(exp: &LispExp<T>, ctx: &T) -> Result<Vec<LispExp<
     }
 }
 
-/// True for anything Lisp calls a list: a cons chain, or `nil` for the
-/// empty one. Used where a primitive rebinds a list-valued variable.
+/// Accept cons values, including dotted lists, and nil as list-valued bindings.
 fn is_list_value<T: LispContext>(exp: &LispExp<T>) -> bool {
     matches!(exp, LispExp::Cons(_)) || exp.is_nil()
 }
@@ -241,13 +178,10 @@ fn format_number(n: f64) -> String {
     }
 }
 
-/// How a value looks to a person: a string as its own text, a symbol as its
-/// name, everything else as the reader would write it.
+/// Format a value for display: strings without quotes, symbols by name, and
+/// collections in Lisp notation. Numbers use the display formatter.
 ///
-/// Shared so that every route from a value to the user agrees -- `format`'s
-/// `%s`, `message`, and `insert`. Two conversions would mean a number reaching
-/// the echo area and the same number reaching a buffer could disagree about
-/// whether it has a trailing `.0`.
+/// This is presentation text, not a serialization format.
 pub fn lisp_display<T: LispContext>(exp: &LispExp<T>) -> String {
     match exp {
         LispExp::String(s) => (**s).clone(),
@@ -258,12 +192,18 @@ pub fn lisp_display<T: LispContext>(exp: &LispExp<T>) -> String {
     }
 }
 
-/// Invokes something callable (a `Lambda`, a `Primitive`, or a symbol naming
-/// one in the function namespace) with already-evaluated arguments. Shared
-/// by `funcall`, `apply`, `mapcar` and `mapc`, and exported for hosts that
-/// need to invoke a Lisp callback from Rust with values they already have
-/// in hand (no need to build and `eval` a quoted call AST just to pass
-/// already-evaluated arguments back into Lisp).
+/// Invoke a lambda, primitive, or symbol in the function namespace.
+///
+/// `call_args` must already be evaluated. A lambda runs in its captured scope;
+/// native functions receive `env`. Symbol aliases resolve in `env`'s function
+/// namespace. This helper does not push a backtrace frame for the target or
+/// open a fuel scope. Lisp yields from these callbacks are not supported.
+///
+/// # Errors
+///
+/// Returns [`EvalError::UndefinedFunction`] for an unbound function symbol,
+/// [`EvalError::UncorrectFunctionDefinition`] for a non-callable value, or
+/// propagates argument and evaluation failures from the callee.
 pub fn call_callable<T: LispContext>(
     func: &LispExp<T>,
     call_args: &[LispExp<T>],
@@ -305,8 +245,6 @@ fn find_assoc<T: LispContext>(args: &[LispExp<T>], ctx: &T) -> Result<LispExp<T>
     exact_arity(args, 2)?;
     let list = expect_list(&args[1], ctx)?;
     for entry in list {
-        // `(a . 1)` and `(a 1)` are both valid alist entries, and both are
-        // now a cons whose car is the key.
         let key = match &entry {
             LispExp::Cons(cell) => Some(cell.car.clone()),
             _ => None,
@@ -340,9 +278,7 @@ fn compare_chain<T: LispContext>(
     Ok(LispExp::boolean(numbers.windows(2).all(|w| op(w[0], w[1]))))
 }
 
-// The ten kinds. Declared *below* the macros above and the helpers above that,
-// because a `macro_rules!` is in scope for the rest of its own module and for
-// the modules declared after it -- and every one of these uses them.
+// Submodules must follow the macros they use because `macro_rules!` has textual scope.
 mod atoms;
 mod comparisons;
 mod fibers;
@@ -354,37 +290,23 @@ mod predicates;
 mod strings;
 mod symbols;
 
-/// What a base-env module registers into.
-///
-/// The same shape as the editor's [`crate::primitives::Registry`], and
-/// deliberately: the two halves of this editor's Lisp surface are installed the
-/// same way, so a reader who has seen one has seen both.
-///
-/// It has no `command` method, and cannot: a command is something a user
-/// invokes by name and whose arguments an *editor* collects, and nothing in
-/// this directory knows there is an editor.
+/// Register native functions and their Lisp docstrings in an environment.
 pub(crate) struct Registry<'a, T: LispContext> {
     env: &'a Arc<Env<T>>,
 }
 
 impl<T: LispContext> Registry<'_, T> {
-    /// Bind NAME to a primitive.
-    ///
-    /// DOC must begin with the primitive's own call -- `(name ARGS): what it
-    /// does` -- because a primitive has no parameter list anything can read, so
-    /// that first line *is* the signature `describe-function` shows.
+    /// Register a primitive with documentation starting `(name ARGS): ...`.
+    /// Native parameter names are unavailable to Lisp introspection.
     pub(crate) fn function(&self, name: &str, pointer: LispPrimitive<T>, doc: &'static str) {
         self.env
             .set_function(name.into(), LispExp::primitive(pointer, Some(doc.into())));
     }
 }
 
-/// Install every primitive this Lisp has of its own.
+/// Install the standard Lisp primitives into `env`.
 ///
-/// Each module registers its own, through [`Registry`]; this is the list of
-/// modules. Alphabetical, because the order does not matter -- each
-/// registration inserts under a name no other uses -- so alphabetical is the
-/// order in which a missing module is visible.
+/// Existing function bindings with the same names are replaced.
 pub fn setup_base_env<T: LispContext>(env: Arc<Env<T>>) {
     let into = Registry { env: &env };
     atoms::install(&into);

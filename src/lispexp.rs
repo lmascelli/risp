@@ -1,6 +1,4 @@
-//!
-//! Add a general description of the LispExp here
-//!
+//! Lisp values, syntax forms, symbol interning, equality, and printing.
 
 use super::{
     ConsCell, ConsIter, FiberState, Lambda, LispContext, LispPrimitive, SharedAtom, SharedFiber,
@@ -11,26 +9,15 @@ use std::{
     sync::{Arc, OnceLock, RwLock},
 };
 
-/// Every symbol name that has been seen, stored once.
-///
-/// A symbol is a name, and two symbols spelled the same should be the same
-/// thing: that is what lets `eq` be a pointer comparison, and what stops
-/// `(progn nil nil nil)` allocating the word "nil" three times.
-///
-/// One table for the whole process rather than one per interpreter. Rust has
-/// no generic statics -- and this needs none, because the table holds only
-/// names and never a `LispExp`. That is precisely why properties live beside
-/// symbols rather than inside them: a plist would drag the context type in
-/// here and this static would become impossible to write.
+/// Process-wide symbol names, interned independently of the host context.
+/// Symbol properties live in environments because they contain context-specific values.
 fn obarray() -> &'static RwLock<HashMap<String, Arc<String>>> {
     static OBARRAY: OnceLock<RwLock<HashMap<String, Arc<String>>>> = OnceLock::new();
     OBARRAY.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-/// The one `Arc` for NAME.
+/// Return the process-wide interned allocation for `name`.
 pub fn intern(name: String) -> Arc<String> {
-    // The overwhelmingly common case: a read lock, a hit, done. The write lock
-    // is taken only the first time a name is ever seen.
     if let Some(found) = obarray()
         .read()
         .expect("Failed to acquire read lock on the obarray")
@@ -46,10 +33,7 @@ pub fn intern(name: String) -> Arc<String> {
         .clone()
 }
 
-/// `nil` and `t`, held directly rather than looked up.
-///
-/// `eval` builds `nil` on the way out of nearly every form and `is_nil` is
-/// asked of nearly every value; neither should touch a lock to do it.
+/// Cache nil's interned name to avoid locking on repeated construction.
 fn nil_name() -> &'static Arc<String> {
     static NIL: OnceLock<Arc<String>> = OnceLock::new();
     NIL.get_or_init(|| intern("nil".to_string()))
@@ -60,57 +44,53 @@ fn t_name() -> &'static Arc<String> {
     T.get_or_init(|| intern("t".to_string()))
 }
 
-// --------------------------------  LispExp  ----------------------------------
 
+/// A Lisp value or reader syntax node. Clones share compound allocations.
+///
+/// Use data cons lists for runtime values and forms for executable syntax.
+/// [`PartialEq`] compares lists structurally and closures by identity; Lisp
+/// `eq` has separate semantics. [`std::fmt::Debug`] uses Lisp notation.
 #[derive(Clone)]
 pub enum LispExp<T: LispContext> {
-    /// A *syntax* node: the vector-backed form the reader produces and
-    /// `eval` dispatches on. Never a runtime value -- a list of *data* is
-    /// a `Cons` chain, and the two are not interchangeable.
+    /// Vector-backed syntax used for evaluation. Use [`Self::proper_list`]
+    /// for data returned to Lisp; an empty form is also treated as nil.
     Form(Arc<Vec<LispExp<T>>>),
 
-    /// A *data* list. `nil` terminates a proper list; anything else
-    /// terminates an improper (dotted) one.
+    /// Data cons cell; nil terminates a proper list, another value a dotted list.
     Cons(Arc<ConsCell<T>>),
 
+    /// A vector of Lisp values.
     Vector(Arc<Vec<LispExp<T>>>),
+    /// A map keyed by strings or symbol names.
     Map(Arc<HashMap<String, LispExp<T>>>),
+    /// An IEEE 754 double-precision number.
     Number(f64),
+    /// An interned symbol name.
     Symbol(Arc<String>),
+    /// An immutable UTF-8 string.
     String(Arc<String>),
+    /// A lexical closure.
     Lambda(Arc<Lambda<T>>),
+    /// A native callable and its Lisp documentation.
     Primitive {
+        /// Native implementation invoked with evaluated arguments.
         pointer: LispPrimitive<T>,
+        /// Lisp docstring; defaults to "No documentation provided." when absent.
         doc: Arc<Cow<'static, str>>,
     },
+    /// A shared mutable value.
     Atom(SharedAtom<T>),
+    /// A cooperative suspended computation.
     Fiber(SharedFiber<T>),
 }
 
-/// Equality, written out rather than derived.
-///
-/// Deriving it was wrong in two ways, both of which took the process down:
-///
-/// * **Cons chains recursed.** One stack frame per cell meant `(equal l l)`
-///   on a long list overflowed the stack and *aborted* -- not a catchable
-///   panic, so `condition-case` could not save the editor. Building a long
-///   list is ordinary Lisp, so this was reachable from a one-line program.
-///   The `Cons` arm below walks the two chains with a loop instead.
-///
-/// * **Lambdas compared their captured environments.** `Lambda` holds an
-///   `Arc<Env>`, and `Env`'s `PartialEq` is `unreachable!()`, so
-///   `(equal (lambda (x) x) (lambda (x) x))` panicked. Comparing environments
-///   structurally is meaningless anyway -- two closures are the same closure
-///   when they *are* the same closure -- so identity is the right test.
+/// Compare cons spines iteratively to avoid stack growth on long flat lists.
+/// Closures compare by identity rather than traversing captured environments.
 #[allow(unpredictable_function_pointer_comparisons)]
 impl<T: LispContext> PartialEq for LispExp<T> {
     fn eq(&self, other: &Self) -> bool {
         use LispExp::*;
         match (self, other) {
-            // Iterative, so the depth of the data does not become the depth
-            // of the Rust stack. `Arc::ptr_eq` short-circuits the common case
-            // of a list compared against itself, and also stops a shared tail
-            // being walked twice.
             (Cons(_), Cons(_)) => {
                 let mut left = self.clone();
                 let mut right = other.clone();
@@ -132,9 +112,6 @@ impl<T: LispContext> PartialEq for LispExp<T> {
                 }
             }
 
-            // Closures are equal when they are the same closure. Anything
-            // else would have to compare captured environments, which is both
-            // meaningless and, as written, a panic.
             (Lambda(a), Lambda(b)) => Arc::ptr_eq(a, b),
 
             (Form(a), Form(b)) => a == b,
@@ -151,19 +128,10 @@ impl<T: LispContext> PartialEq for LispExp<T> {
     }
 }
 
-/// `LispExp` prints as Lisp source, not as a Rust value. The derived
-/// `Debug` was tolerable while lists were vectors, but a cons chain
-/// derives as `Cons(ConsCell { car: .., cdr: Cons(ConsCell { .. } ) })`,
-/// nested once per element -- unreadable in the echo area, which is where
-/// most of these strings end up (`report-error`, `*Messages*`, the eval
-/// minibuffer). Everything the reader can produce round-trips; the values
-/// it cannot read back (lambdas, primitives, atoms, fibers) print in
-/// `#<...>` form, following Elisp.
+/// Format values in Lisp notation. Runtime-only values use opaque `#<...>` forms.
 impl<T: LispContext> std::fmt::Debug for LispExp<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            // Both list shapes print the same way: the distinction between
-            // a syntax node and a data list is ours, not the reader's.
             LispExp::Form(items) => {
                 write!(f, "(")?;
                 for (i, item) in items.iter().enumerate() {
@@ -212,9 +180,7 @@ impl<T: LispContext> std::fmt::Debug for LispExp<T> {
                 write!(f, "}}")
             }
 
-            // Every number is an `f64`, but `(+ 1 2)` should echo as `3`,
-            // not `3.0`. Only values that really are integral take the
-            // integer path, so `1.5` and `1e300` still print faithfully.
+            // Restrict the integer cast to a conservative range; format larger values directly.
             LispExp::Number(n) => {
                 if n.is_finite() && n.fract() == 0.0 && n.abs() < 1e15 {
                     write!(f, "{}", *n as i64)
@@ -225,8 +191,6 @@ impl<T: LispContext> std::fmt::Debug for LispExp<T> {
 
             LispExp::Symbol(s) => write!(f, "{}", s),
 
-            // Rust's string escaping is close enough to Lisp's that the
-            // result reads back correctly for the escapes the lexer knows.
             LispExp::String(s) => write!(f, "{:?}", s.as_str()),
 
             LispExp::Lambda(lambda) => {
@@ -260,11 +224,8 @@ impl<T: LispContext> std::fmt::Debug for LispExp<T> {
 
             LispExp::Primitive { .. } => write!(f, "#<primitive>"),
 
-            // Deliberately opaque. An atom is the one mutable container in
-            // the language, so it is also the one place a value can be made
-            // to contain itself -- recursing here could hang the printer,
-            // and taking the lock could deadlock against a writer that is
-            // formatting its own contents. `deref` is how you look inside.
+            // Do not lock or traverse atoms: they may contain themselves,
+            // or a writer may be formatting its own locked value.
             LispExp::Atom(_) => write!(f, "#<atom>"),
 
             LispExp::Fiber(fiber) => match fiber.0.try_read() {
@@ -277,30 +238,29 @@ impl<T: LispContext> std::fmt::Debug for LispExp<T> {
 }
 
 impl<T: LispContext> LispExp<T> {
+    /// Intern a symbol name. Symbols other than `nil`, `t`, and keywords require lookup.
     pub fn symbol(value: String) -> LispExp<T> {
         LispExp::Symbol(intern(value))
     }
 
+    /// Return the canonical empty list and false value, the symbol `nil`.
     pub fn nil() -> LispExp<T> {
         LispExp::Symbol(nil_name().clone())
     }
 
+    /// Return the conventional true symbol `t`.
     pub fn t() -> LispExp<T> {
         LispExp::Symbol(t_name().clone())
     }
 
+    /// Convert a Rust boolean to `t` or `nil`.
     pub fn boolean(value: bool) -> LispExp<T> {
         if value { Self::t() } else { Self::nil() }
     }
 
-    /// Whether this is a fiber with nothing left to run, or `None` when it is
-    /// not a fiber at all.
+    /// Return whether a fiber has finished, or `None` for another value type.
     ///
-    /// Here rather than reached for through `SharedFiber` by whoever wants to
-    /// know, so that a caller outside the interpreter -- the editor's worker
-    /// scheduler is the one -- does not have to be handed the lock to ask a
-    /// yes-or-no question. A poisoned lock reads as finished: a fiber whose
-    /// state cannot be read is not one anything should carry on resuming.
+    /// A poisoned state lock is treated as finished.
     pub fn fiber_is_done(&self) -> Option<bool> {
         match self {
             LispExp::Fiber(fiber) => {
@@ -310,6 +270,7 @@ impl<T: LispContext> LispExp<T> {
         }
     }
 
+    /// Whether this value is the symbol `nil` or an empty syntax form.
     pub fn is_nil(&self) -> bool {
         match self {
             LispExp::Symbol(s) => s.as_str() == "nil",
@@ -318,23 +279,29 @@ impl<T: LispContext> LispExp<T> {
         }
     }
 
+    /// Whether this value is true in Lisp: false only for [`Self::is_nil`].
+    /// Zero, empty strings, and empty vectors and maps are true.
     pub fn is_truthy(&self) -> bool {
         !self.is_nil()
     }
 
+    /// Create an immutable Lisp string.
     pub fn string(value: String) -> LispExp<T> {
         LispExp::String(Arc::new(value))
     }
 
+    /// Create a Lisp number without restricting finite or integral values.
     pub fn number(value: f64) -> LispExp<T> {
         LispExp::Number(value)
     }
 
+    /// Prepend a cell without copying `cdr`; a non-list tail creates a dotted pair.
     pub fn cons(car: LispExp<T>, cdr: LispExp<T>) -> LispExp<T> {
         LispExp::Cons(Arc::new(ConsCell { car, cdr }))
     }
 
-    /// Fold a vector into a proper list, right to left.
+    /// Build a proper data list in input order, terminated by nil.
+    /// An empty input returns nil.
     pub fn proper_list(items: Vec<LispExp<T>>) -> LispExp<T> {
         items
             .into_iter()
@@ -342,7 +309,8 @@ impl<T: LispContext> LispExp<T> {
             .fold(LispExp::nil(), |cdr, car| LispExp::cons(car, cdr))
     }
 
-    /// Fold a vector into a chain ending in an arbitrary tail.
+    /// Build a data list in input order ending in `tail`.
+    /// An empty input returns `tail` unchanged.
     pub fn improper_list(items: Vec<LispExp<T>>, tail: LispExp<T>) -> LispExp<T> {
         items
             .into_iter()
@@ -350,17 +318,17 @@ impl<T: LispContext> LispExp<T> {
             .fold(tail, |cdr, car| LispExp::cons(car, cdr))
     }
 
-    /// Walk a cons chain, yielding each `car`. Stops at any non-`Cons`
-    /// cdr, so it silently treats an improper list as its proper prefix —
-    /// callers that care use `split_list` below.
+    /// Iterate cloned heads of the cons prefix, ignoring a dotted tail.
+    /// Non-cons values produce an empty iterator. Use [`Self::split_list`]
+    /// when the tail must be checked.
     pub fn iter(&self) -> ConsIter<T> {
         ConsIter {
             cursor: self.clone(),
         }
     }
 
-    /// Collect a chain into `(elements, final_tail)`. The tail is `nil`
-    /// for a proper list.
+    /// Collect a cons prefix and return its final tail.
+    /// A proper list ends in nil. A non-cons value returns `(vec![], self.clone())`.
     pub fn split_list(&self) -> (Vec<LispExp<T>>, LispExp<T>) {
         let mut items = Vec::new();
         let mut cursor = self.clone();
@@ -371,37 +339,35 @@ impl<T: LispContext> LispExp<T> {
         (items, cursor)
     }
 
-    /// Build a *syntax* node. Reserved for the reader, macro expansion and
-    /// `data_to_form`; primitives that return a list to Lisp want
-    /// `proper_list` instead.
+    /// Build executable syntax. Use [`Self::proper_list`] for runtime list data.
     pub fn form(value: Vec<LispExp<T>>) -> LispExp<T> {
         LispExp::Form(Arc::new(value))
     }
 
+    /// Create a vector value, distinct from a data list or syntax form.
     pub fn vec(value: Vec<LispExp<T>>) -> LispExp<T> {
         LispExp::Vector(Arc::new(value))
     }
 
+    /// Create a map with string keys.
     pub fn map(value: HashMap<String, LispExp<T>>) -> LispExp<T> {
         LispExp::Map(Arc::new(value))
     }
 
+    /// Wrap a closure and share its allocation across clones.
     pub fn lambda(value: Lambda<T>) -> LispExp<T> {
         LispExp::Lambda(Arc::new(value))
     }
 
+    /// Wrap a continuation in shared fiber state.
     pub fn fiber(value: FiberState<T>) -> LispExp<T> {
         LispExp::Fiber(SharedFiber(Arc::new(RwLock::new(value))))
     }
 
-    /// Build a `Primitive` value from a native function pointer and an
-    /// optional docstring. DOC accepts either a `&'static str` -- the
-    /// common case for primitives whose documentation is a literal sitting
-    /// right next to the function, which costs no allocation -- or an owned
-    /// `String`, for documentation that only exists at runtime (e.g. loaded
-    /// alongside a primitive from a dynamic library). Either way the
-    /// resulting `Primitive` stays cheap to `Clone`: only the `Arc`'s
-    /// refcount is bumped, never the string itself.
+    /// Create a native primitive with an optional Lisp docstring.
+    ///
+    /// Use [`std::borrow::Cow::Borrowed`] for static text or
+    /// [`std::borrow::Cow::Owned`] for runtime documentation. Clones share the docstring.
     pub fn primitive(pointer: LispPrimitive<T>, doc: Option<Cow<'static, str>>) -> LispExp<T> {
         LispExp::Primitive {
             pointer,

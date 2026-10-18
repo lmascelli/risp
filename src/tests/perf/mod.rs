@@ -39,7 +39,7 @@ fn interpreter_performance_suite() {
 mod suite {
     use crate::{Env, EvalError, FuelMeter, LispContext, LispExp, Parser, eval, measure};
 
-    /// Minimal metering host so interpreter costs do not include editor work.
+    /// Minimal host for measuring interpreter fuel costs.
     #[derive(Debug, Clone)]
     pub(super) struct Meter {
         fuel: Arc<FuelMeter>,

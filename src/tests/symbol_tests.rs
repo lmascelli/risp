@@ -1,22 +1,7 @@
-//! Interned symbols, and the properties hung beside them.
+//! Symbol interning and properties.
 //!
-//! # What these are really protecting
-//!
-//! That **interning is total** -- that no symbol anywhere is built outside
-//! `LispExp::symbol`, so two spellings of a name are one allocation.
-//!
-//! That is not a tidiness claim, it is the precondition for two optimisations
-//! that are not yet taken: `eq` on symbols is still a string comparison
-//! (`base_env.rs`) and so is `is_nil` (`lispexp.rs`). Both become a pointer
-//! comparison the moment interning can be relied on -- and both fail
-//! *silently* if it cannot, returning false for two symbols that are plainly
-//! the same. There is no compiler error waiting to catch that; there is only
-//! this file.
-//!
-//! So the tests below are written to pass **either way**. They pin the
-//! behaviour that must not change, and separately pin the identity that makes
-//! the faster implementation legal. Flip `eq` and `is_nil` to `Arc::ptr_eq`
-//! and none of them should move.
+//! Check both observable equality and shared allocation identity so future
+//! pointer-based comparisons remain valid.
 #[cfg(test)]
 mod tests {
     use crate::{Env, EvalError, LispExp, Parser, eval, setup_base_env};
@@ -53,9 +38,7 @@ mod tests {
         Arc::ptr_eq(&name_of(a), &name_of(b))
     }
 
-    // -----------------------------------------------------------------------
     // Interning is total
-    // -----------------------------------------------------------------------
 
     #[test]
     fn a_name_built_twice_is_one_object() {
@@ -66,8 +49,7 @@ mod tests {
 
     #[test]
     fn different_names_are_different_objects() {
-        // The other half: interning must not collapse names that differ, which
-        // a botched hash or an over-eager cache could.
+        // Distinct names must remain distinct allocations.
         let first = LispExp::<()>::symbol("zzz-one".to_string());
         let second = LispExp::<()>::symbol("zzz-two".to_string());
         assert!(!same_object(&first, &second));
@@ -76,10 +58,7 @@ mod tests {
 
     #[test]
     fn the_reader_interns_what_it_reads() {
-        // The path that matters most, and the one a constructor test misses:
-        // every symbol in every file the editor loads is made here. If the
-        // parser built its own, `eq` as a pointer comparison would be false
-        // for two occurrences of the same name in the same file.
+        // The reader must use the same intern table as direct symbol construction.
         let parsed = eval_ok("'zzz-from-source");
         let built = LispExp::<()>::symbol("zzz-from-source".to_string());
         assert!(same_object(&parsed, &built));
@@ -96,10 +75,7 @@ mod tests {
 
     #[test]
     fn nil_is_one_object_however_it_is_reached() {
-        // `nil` is held in a static rather than looked up, so it is the one
-        // name that could drift away from the table without anything noticing.
-        // `is_nil` compares against that static the moment it stops comparing
-        // strings, so every route to nil has to arrive at the same `Arc`.
+        // The cached nil name must share the interned allocation.
         let constructed = LispExp::<()>::nil();
         let built = LispExp::<()>::symbol("nil".to_string());
         let parsed = eval_ok("'nil");
@@ -130,19 +106,14 @@ mod tests {
 
     #[test]
     fn a_symbol_made_from_a_computed_name_is_the_same_object() {
-        // `intern` is reachable from Lisp, and a name built at runtime must
-        // land on the same object as one written in the source -- otherwise
-        // `(eq (intern "foo") 'foo)` is false, which is the bug that makes
-        // symbol tables useless.
+        // Runtime interning and source literals must share the same symbol name.
         let computed = eval_ok("(intern (concat \"zzz-com\" \"puted\"))");
         let written = eval_ok("'zzz-computed");
         assert!(same_object(&computed, &written));
         assert_eq!(eval_ok("(eq (intern \"zzz-x\") 'zzz-x)"), LispExp::t());
     }
 
-    // -----------------------------------------------------------------------
-    // The behaviour that must survive the optimisation
-    // -----------------------------------------------------------------------
+    // Observable equality.
 
     #[test]
     fn eq_holds_for_symbols_spelled_the_same() {
@@ -155,8 +126,7 @@ mod tests {
 
     #[test]
     fn a_symbol_is_not_eq_to_the_string_of_its_name() {
-        // Interning keys on the name, so this is the confusion it could
-        // plausibly cause: two different kinds of value that hold equal text.
+        // A string and a symbol with the same text remain different value types.
         assert_eq!(eval_ok("(eq 'alpha \"alpha\")"), LispExp::nil());
         assert_eq!(eval_ok("(equal 'alpha \"alpha\")"), LispExp::nil());
     }
@@ -179,9 +149,7 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------------
     // Properties
-    // -----------------------------------------------------------------------
 
     #[test]
     fn a_property_comes_back() {
@@ -227,11 +195,7 @@ mod tests {
 
     #[test]
     fn a_property_set_inside_a_let_is_still_there_outside_it() {
-        // The one claim in the docstring that is not obvious, and the reason
-        // the table lives on the root rather than on the environment doing the
-        // writing: a property belongs to the symbol, and a symbol is not a
-        // binding. Written the other way round, `(let () (put ...))` would
-        // store into a frame that is discarded on the way out.
+        // Properties written in a child scope must remain visible from the root.
         assert_eq!(
             eval_ok("(let ((ignored 1)) (put 'alpha 'colour 'red)) (get 'alpha 'colour)"),
             LispExp::symbol("red".to_string())
@@ -240,8 +204,7 @@ mod tests {
 
     #[test]
     fn a_property_set_inside_a_function_is_still_there_outside_it() {
-        // The same claim through a closure, which captures its own environment
-        // and so reaches the root by a different chain than a `let` does.
+        // A closure must reach the same root property table as its caller.
         assert_eq!(
             eval_ok(
                 "(defun zzz-set () (put 'alpha 'colour 'green)) (zzz-set) (get 'alpha 'colour)"
@@ -276,8 +239,7 @@ mod tests {
 
     #[test]
     fn properties_are_not_variables() {
-        // They share a name space with nothing: `(put 'x 'y 1)` does not make
-        // `x` or `y` bound, and a variable called `x` does not shadow them.
+        // Symbol properties neither create bindings nor depend on variable shadowing.
         let env = env_with_primitives();
         eval_str("(setq alpha 1) (put 'alpha 'colour 'red)", env.clone()).expect("setup");
         assert_eq!(

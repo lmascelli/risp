@@ -9,11 +9,9 @@ mod tests {
     }
 }
 
-// Parser tests
 mod lexer_tests;
 mod parser_tests;
 mod source_map_tests;
-// Eval tests
 mod backtrace_tests;
 mod base_env_tests;
 mod documentation_tests;
@@ -22,12 +20,10 @@ mod lexical_context;
 mod lisp_core_compliance_tests;
 mod nonlocal_exit_tests;
 mod symbol_tests;
-// Thread, concurrency and fuel
 mod fiber_tests;
 mod fuel;
 #[cfg(test)]
 mod perf;
 mod thread_tests;
 mod yield_tests;
-// Handshake
 mod handshake;

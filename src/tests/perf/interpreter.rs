@@ -1,9 +1,4 @@
-//! Interpreter benchmarks, classified by the operation they measure.
-//!
-//! These live alongside the interpreter tests so one runner can emit
-//! one complete report per run. What they measure is still the interpreter
-//! alone: they evaluate against the bare metering host in [`super::suite`],
-//! which has no buffers, keymaps or logging for a number to leak in from.
+//! Interpreter benchmarks using the minimal metering host in [`super::suite`].
 use super::metrics::{per_unit_ns, ratio, time_median};
 use super::report::{Report, Row};
 use super::suite::{Bench, Meter, SHAPE_TOLERANCE, Scaling};
@@ -20,9 +15,6 @@ pub(super) fn cost(report: &mut Report) {
     list_primitives(report);
 }
 
-// -------------------------------------------------------------------------
-// The evaluator's core loop
-// -------------------------------------------------------------------------
 
 fn eval_core(report: &mut Report) {
     let bench = Bench::new();
@@ -33,9 +25,7 @@ fn eval_core(report: &mut Report) {
     });
     let tail = Scaling::measure(&bench, N, |n| format!("(countdown {n})"));
 
-    // Stack safety is a correctness property of the trampoline, not a cost, but
-    // it is cheapest to check right here where the deep recursion already runs.
-    // 100,000 frames would overflow the Rust stack if a tail call recursed.
+    // This depth also checks trampoline stack safety without a second workload.
     bench.run(&bench.parse("(countdown 100000)"));
 
     report.section(
@@ -65,9 +55,6 @@ fn eval_core(report: &mut Report) {
     );
 }
 
-// -------------------------------------------------------------------------
-// Calls
-// -------------------------------------------------------------------------
 
 fn calls(report: &mut Report) {
     let bench = Bench::new();
@@ -125,19 +112,11 @@ fn calls(report: &mut Report) {
     linear(report, "macro call", &expanded);
 }
 
-// -------------------------------------------------------------------------
-// List primitives
-// -------------------------------------------------------------------------
 
 fn list_primitives(report: &mut Report) {
     let bench = Bench::new();
 
-    // `cons` is the one that decides whether Lisp-side accumulation is usable
-    // at all: a list is a chain of `Cons(Arc<ConsCell>)`, so linking a new head
-    // onto an existing tail is one allocation with no copying, and the
-    // cons-then-reverse idiom stays linear. It used to be the opposite -- lists
-    // were a flat `Vec`, `cons` copied the whole tail, and any accumulating
-    // loop was quadratic. This row is what pins the inversion.
+    // `cons` must share its tail so cons-then-reverse accumulation remains linear.
     let cons = Scaling::measure(&bench, N, |n| {
         format!(
             "(setq acc nil) (setq i 0) \
@@ -249,9 +228,6 @@ fn list_primitives(report: &mut Report) {
     }
 }
 
-// -------------------------------------------------------------------------
-// Timing: the parts of the interpreter with nothing to count
-// -------------------------------------------------------------------------
 
 pub(super) fn timing(report: &mut Report) {
     parser(report);
@@ -259,10 +235,7 @@ pub(super) fn timing(report: &mut Report) {
 }
 
 fn parser(report: &mut Report) {
-    // Parsing runs on every `eval-string`, every `eval-file` and every M-:, and
-    // it is the step any future bytecode compiler would have to run before it
-    // could compile anything -- so its complexity is a floor under all of that.
-    // It is not fuel-charged (nothing is evaluating yet), hence wall clock.
+    // Parsing is not fuel-metered; measure its scaling with elapsed time.
     let build = |n: usize| {
         let mut src = String::from("(progn ");
         for i in 0..n {
@@ -274,9 +247,7 @@ fn parser(report: &mut Report) {
         src
     };
 
-    // Sized so that even a release build spends tens of milliseconds per parse.
-    // At a few hundred forms the measurement was short enough that scheduler
-    // noise moved the ratio between 1.2x and 3.7x run to run.
+    // Use a workload long enough to reduce scheduler noise in timing ratios.
     const FORMS: usize = 4_000;
     let time_parse = |src: &str| {
         time_median(|| {
@@ -314,16 +285,8 @@ fn parser(report: &mut Report) {
 }
 
 fn scope_depth(report: &mut Report) {
-    // Variable lookup walks the `Env` parent chain, taking an `RwLock` read and
-    // a `HashMap` probe at every level until it hits. So what an access costs
-    // depends on how deeply nested the code touching it is -- and since `let`
-    // and every call push a frame, real code is never at depth zero.
-    //
-    // The chain walk is not fuel-charged (the evaluator charges the lookup as
-    // one step regardless of depth), which is precisely why it needs a clock.
-    // If lexical addressing lands -- resolving a name to a fixed frame and slot
-    // once instead of re-searching by name -- this ratio collapses toward 1.0
-    // and this row is how you would demonstrate the win.
+    // Lookup cost grows with lexical depth, but fuel charges it as one step.
+    // Measure elapsed time to expose the additional parent-chain traversal.
     const ITERS: usize = 20_000;
     const DEPTH: usize = 12;
 
@@ -381,9 +344,6 @@ fn scope_depth(report: &mut Report) {
     );
 }
 
-// -------------------------------------------------------------------------
-// Shared row and verdict shapes
-// -------------------------------------------------------------------------
 
 fn scaling_row(key: &str, label: &str, s: &Scaling, unit: &str) -> Row {
     Row::new(

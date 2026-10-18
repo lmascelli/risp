@@ -1,9 +1,4 @@
-//! Work that can be put down and picked up.
-//!
-//! A fiber is a suspended evaluation: `resume` gives it a turn and
-//! `fiber-done-p` asks whether it has finished. What a *turn* costs, and
-//! which thread it runs on, is the host's business -- see
-//! `crate::background`.
+//! Cooperative fibers, resumed synchronously by the calling thread.
 use super::*;
 
 const RESUME_DOC: &str = "(resume FIBER): Carry FIBER on from wherever it stopped, and return \
@@ -40,20 +35,8 @@ fn primitive_resume<T: LispContext>(
         };
     };
 
-    // # Why the stack is taken out rather than borrowed
-    //
-    // Running it means running arbitrary Lisp, and this used to do that with
-    // the fiber's write lock still held. That was survivable while a fiber
-    // could only run one whole form to completion; it is not now. The first
-    // thing that Lisp does that reaches its own fiber -- `(resume f)' on
-    // itself, or asking whether it has finished -- deadlocks on a lock nobody
-    // can see. So the lock answers one question, is dropped, and is taken
-    // again to record the answer.
-    //
-    // Taking it also leaves the fiber holding *nothing* while it runs, which
-    // is the honest state: a second `resume' arriving from another thread
-    // finds an empty stack and does nothing, rather than starting the same
-    // program a second time alongside the first.
+    // Release the lock before evaluating Lisp to allow access to the running fiber.
+    // Taking the continuation also prevents concurrent resumes from running it twice.
     let frames = {
         let mut fiber = shared_fiber
             .0
@@ -80,20 +63,16 @@ fn primitive_resume<T: LispContext>(
         .write()
         .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
     match outcome {
-        // Suspended again: the new stack is where it stopped.
         Err(EvalError::Yielded { value, frames }) => {
             fiber.pending = frames;
             Ok(value)
         }
-        // Nothing left on the stack, so nothing left to come back to.
         Ok(value) => {
             fiber.is_done = true;
             Ok(value)
         }
         Err(other) => {
-            // See the docstring: unwinding destroyed the position, so there is
-            // no coming back. Resuming again would restart the program
-            // somewhere it had already been.
+            // An error destroys the continuation; retire the fiber to prevent replay.
             fiber.is_done = true;
             fiber.pending.clear();
             Err(other)
@@ -130,11 +109,7 @@ fn primitive_fiber_done_p<T: LispContext>(
     }
 }
 
-/// Register this module's primitives: work that can be put down and picked up.
-///
-/// Called by [`super::setup_base_env`]. Here rather than there because a
-/// primitive's name, its implementation and its docstring are one fact in three
-/// pieces, and they were a thousand lines apart.
+/// Register this module's primitives and Lisp docstrings.
 pub(super) fn install<T: LispContext>(into: &Registry<T>) {
     into.function("fiber-done-p", primitive_fiber_done_p, FIBER_DONE_P_DOC);
     into.function("resume", primitive_resume, RESUME_DOC);

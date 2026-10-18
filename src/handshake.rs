@@ -1,17 +1,17 @@
 use crate::{Env, EvalError, LispContext, LispExp, Parser, eval, setup_base_env};
 use std::sync::Arc;
 
-/// Boots the agnostic Lisp engine, registers standard environments,
-/// and runs an internal diagnostic script to verify VM stability.
+/// Create a standard environment and verify arithmetic and fiber suspension.
+///
+/// The diagnostic script leaves `verify-math`, `verify-fiber`, and `fiber-step`
+/// bound in the returned environment. Evaluation failures propagate; a parse
+/// or verification failure returns [`EvalError::UncorrectFunctionDefinition`].
+/// Diagnostics are sent through [`LispContext::log_diagnostic`].
 pub fn bootstrap_vm<T: LispContext>(ctx: &T) -> Result<Arc<Env<T>>, EvalError<T>> {
-    // 1. Initialize the pristine root environment
     let env = Env::new_root();
 
-    // 2. Load basic primitives (Math, Atoms, Threading, Fibers)
     setup_base_env(env.clone());
 
-    // 3. The Handshake Script: An embedded Lisp string that stresses the engine features
-    // to verify closures, arithmetic, loops, and basic fiber allocations work.
     let verification_script = r#"
         (progn
             ;; Test structural scoping & primitives
@@ -32,17 +32,15 @@ pub fn bootstrap_vm<T: LispContext>(ctx: &T) -> Result<Arc<Env<T>>, EvalError<T>
                 'error-math-failed))
     "#;
 
-    // 4. Parse and evaluate the handshake script
     let mut parser = Parser::new(verification_script);
     let ast = parser.next().or_else(|_| {
-        Err(EvalError::UncorrectFunctionDefinition) // Fallback if parsing fails
+        Err(EvalError::UncorrectFunctionDefinition)
     })?;
 
     ctx.log_diagnostic("VM Handshake: Initiating verification script...");
 
     let status = eval(&ast, env.clone(), ctx)?;
 
-    // 5. Verify the state outcome
     if status == LispExp::symbol("vm-status-healthy".into()) {
         ctx.log_diagnostic("VM Handshake: State verification successful. Core is stable.");
         Ok(env)

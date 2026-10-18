@@ -1,8 +1,4 @@
-//! ========================================================================== //
-//!                    +----------------------------------------+
-//!                    |  Parsing system for the lisp language  |
-//!                    +----------------------------------------+
-//! ========================================================================== //
+//! Tokenization and iterative reading of Lisp syntax and quoted data.
 
 use super::{LispContext, LispExp, Location, SourceMap};
 use std::collections::HashMap;
@@ -10,20 +6,12 @@ use std::sync::Arc;
 
 pub(crate) const MAX_READ_DEPTH: usize = 256;
 
-/// The characters of the text, one of lookahead, together with the line and
-/// column of the next one.
-///
-/// It has the two methods the lexer calls on the iterator it replaces, so the
-/// state machine reads exactly as it did; only `next` learned to count.
+/// Character lookahead with the line and column of the next character.
 struct Source<'source> {
     chars: std::iter::Peekable<std::str::Chars<'source>>,
     line: u32,
     column: u32,
 }
-
-// -----------------------------------------------------------------------------
-//                  Structs necessary to the lexer to locate the code
-// -----------------------------------------------------------------------------
 
 impl<'source> Source<'source> {
     fn new(text: &'source str, first_line: u32) -> Self {
@@ -50,15 +38,11 @@ impl<'source> Source<'source> {
     }
 }
 
-/// What a parser in debug mode records its forms with.
+/// Source-map destination and source name for located forms.
 struct Located {
     map: Arc<SourceMap>,
     file: Arc<str>,
 }
-
-// -----------------------------------------------------------------------------
-//                      Structs necessary to the tokenizer
-// -----------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Token {
@@ -92,28 +76,45 @@ enum ParserLexerState {
     InDotStart,
 }
 
+/// Lexical or structural reader failure.
+///
+/// `VoidExp` covers both end of input and an incomplete reader prefix.
 #[derive(Debug, PartialEq)]
 pub enum ParserError {
-    // Lexing
+    /// A closing `)` has no matching opening `(`.
     UnbalancedRParen,
+    /// A closing `]` has no matching opening `[`.
     UnbalancedRSquared,
+    /// A closing `}` has no matching opening `{`.
     UnbalancedRBracket,
+    /// The contained token cannot be read as a number.
     NumberParseError(String),
+    /// Invalid character in a numeric token; retained for compatibility.
     NumberInvadidChar(char),
+    /// Input ended inside a string or a string escape.
     UnclosedString,
-    // Parsing
+    /// No expression is available, including end of input or a dangling reader prefix.
     VoidExp,
+    /// Input ended before a list was closed.
     UnclosedList,
+    /// Input ended before a vector was closed.
     UnclosedVector,
+    /// Input ended before a map was closed.
     UnclosedMap,
+    /// A map key is neither a symbol nor a string.
     InvalidMapKey,
+    /// A map closes with a key that has no value.
     MapKeyMissingValue,
+    /// The contained token is not valid at the current reader position.
     UnexpectedToken(String),
+    /// A dotted list has a missing or additional tail expression or closing delimiter.
     MalformedDottedList,
+    /// Reading would exceed the maximum of 256 nested reader frames.
     TooDeep,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+/// Quote keeps descendant lists as data; unquote restores code inside a template.
 enum Mode {
     Code,
     Data,
@@ -188,22 +189,27 @@ impl<T: LispContext> ReadFrame<T> {
     }
 }
 
+/// A stateful reader over borrowed Lisp source.
+///
+/// Call [`Self::next`] repeatedly to read successive expressions. Ordinary code
+/// lists become [`LispExp::Form`] nodes; quoted lists and dotted lists become
+/// cons data. No evaluation fuel is charged while reading.
 pub struct Parser<'source> {
     source: Source<'source>,
     token: String,
     current_token: Token,
     parens_stack: Vec<Token>,
     lexer_state: ParserLexerState,
-    /// Debug mode: the table forms are recorded in, and the name of the text.
-    /// `None` in the nominal mode, which then records nothing.
+    /// Optional source-map recording and source name.
     located: Option<Located>,
-    /// Where the source stood just after `current_token` was read. Kept only
-    /// in debug mode.
+    /// Position just after the current token; updated only while recording locations.
     current_end: (u32, u32),
 }
 
-/// Convert a form produced by the reader into the data it denotes.
-/// Runs once, at read time, on quoted structure only.
+/// Convert syntax forms to proper data lists recursively.
+///
+/// Recurse through vector and map contents, preserving those container types.
+/// Other values, including existing cons lists, are cloned unchanged.
 pub fn form_to_data<T: LispContext>(exp: &LispExp<T>) -> LispExp<T> {
     match exp {
         LispExp::Form(items) => LispExp::proper_list(items.iter().map(form_to_data).collect()),
@@ -218,6 +224,7 @@ pub fn form_to_data<T: LispContext>(exp: &LispExp<T>) -> LispExp<T> {
 }
 
 impl<'source> Parser<'source> {
+    /// Create a reader without source-location tracking.
     pub fn new(source: &'source str) -> Self {
         Self {
             source: Source::new(source, 1),
@@ -230,13 +237,10 @@ impl<'source> Parser<'source> {
         }
     }
 
-    /// A parser for debug mode: every list it reads is recorded in MAP as
-    /// found in FILE, at the line and column of its `(`.
+    /// Create a parser that records list locations in `map` under `file`.
     ///
-    /// FIRST_LINE is the number of the text's first line: 1 for a text read
-    /// as it is, 0 for one a caller has prefixed with a line of its own -- the
-    /// `(progn` `eval_file` wraps a file in -- so that the file's lines keep
-    /// their numbers.
+    /// `first_line` is the starting line number, normally 1. Use 0 when a caller
+    /// prefixes the input with one synthetic line to preserve original numbering.
     pub fn with_source_map(
         source: &'source str,
         map: Arc<SourceMap>,
@@ -382,19 +386,7 @@ impl<'source> Parser<'source> {
                         self.token.push(*c);
                     }
                 },
-                // An escape inside a string.
-                //
-                // The named ones are the characters that cannot otherwise be
-                // written: without `\n` a string cannot contain a newline at
-                // all, so no module could build so much as a two-line
-                // listing.
-                //
-                // Everything else keeps its backslash rather than being
-                // rejected or silently eaten, because the regular expressions
-                // the syntax rules are written out of are full of escapes that
-                // mean something to `regex` and nothing here -- `\b`, `\s`,
-                // `\.`. Passing those through is what lets a grammar be
-                // written with single backslashes as well as doubled ones.
+                // Decode named escapes; preserve other backslashes for downstream regex parsers.
                 ParserLexerState::InStringSlash => match c {
                     '"' | '\\' => {
                         self.token.push(*c);
@@ -572,7 +564,6 @@ impl<'source> Parser<'source> {
             self.source.next();
         }
 
-        // handle pending token
         match self.lexer_state {
             ParserLexerState::Default => {
                 if !self.token.is_empty() {
@@ -654,18 +645,22 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    /// Debug mode: where the `(` or `)` that is `current_token` was, as
-    /// (line, column); `None` in the nominal mode.
-    ///
-    /// The lexer hands a parenthesis over the moment it consumes it, so the
-    /// source stands one character past it -- on the same line, since a
-    /// parenthesis is not a newline.
+    /// Position of the current delimiter when source tracking is enabled.
+    /// The lexer has already consumed it, so subtract one column.
     fn paren_position(&self) -> Option<(u32, u32)> {
         self.located.as_ref()?;
         let (line, column) = self.current_end;
         Some((line, column - 1))
     }
 
+    /// Read the next expression.
+    ///
+    /// # Errors
+    ///
+    /// Returns `VoidExp` when no expression is available. This includes both
+    /// clean end of input and a dangling quote or other reader prefix.
+    /// Malformed input returns a lexical or structural error; nesting beyond
+    /// 256 reader frames returns `TooDeep`. Recovery after an error is not guaranteed.
     pub fn next<T: LispContext>(&mut self) -> Result<LispExp<T>, ParserError> {
         let mut frames: Vec<ReadFrame<T>> = Vec::new();
         let mut ready: Option<LispExp<T>> = None;
@@ -675,7 +670,6 @@ impl<'source> Parser<'source> {
         }
 
         loop {
-            // Loops until it can return a complete expression
             if let Some(value) = ready.take() {
                 let Some(frame) = frames.last_mut() else {
                     return Ok(value);
@@ -713,7 +707,6 @@ impl<'source> Parser<'source> {
                 continue;
             }
 
-            // Check that after the tail of a dotted list there is a close parens.
             if matches!(
                 frames.last(),
                 Some(ReadFrame {
@@ -728,7 +721,6 @@ impl<'source> Parser<'source> {
                 return Err(ParserError::MalformedDottedList);
             }
 
-            // Checks that the key of a map is a string or a symbol.
             if let Some(ReadFrame {
                 kind: Kind::Map { key, .. },
                 ..

@@ -2,9 +2,6 @@
 mod test {
     use crate::{Parser, Token, parser::ParserError};
 
-    // ==========================================
-    // LEXER TESTS
-    // ==========================================
     fn tokenize(input: &str) -> Result<Vec<Token>, ParserError> {
         let mut parser = Parser::new(input);
         let mut ret = Vec::new();
@@ -56,7 +53,6 @@ mod test {
 
     #[test]
     fn test_numbers() {
-        // Note: these require a trailing space currently based on your logic
         let input = "123 45.67 0.1 ";
         let tokens = lex_all(input).unwrap();
         assert_eq!(
@@ -109,7 +105,6 @@ mod test {
 
     #[test]
     fn test_delimiters_no_spaces() {
-        // Symbols and numbers ending exactly at a parenthesis
         let input = "(factorial 5)(add x y)";
         let tokens = lex_all(input).unwrap();
 
@@ -139,13 +134,12 @@ mod test {
             vec![
                 Token::String("line1\nline2".into()),
                 Token::String("quote: \" ".into()),
-                Token::String("".into()), // Empty string
+                Token::String("".into()),
             ]
         );
     }
 
-    /// The named escapes, which are the characters a string has no other way
-    /// to contain.
+    /// Named string escapes decode to their corresponding characters.
     #[test]
     fn the_named_escapes_become_the_characters_they_name() {
         let input = r#" "a\nb" "a\tb" "a\rb" "a\0b" "a\eb" "#;
@@ -161,11 +155,7 @@ mod test {
         );
     }
 
-    /// An escape the reader does not know keeps its backslash rather than
-    /// being eaten, because the syntax grammars are written out of regular
-    /// expressions full of escapes that mean nothing here: `\b`, `\s`, `\.`.
-    /// Dropping the backslash would turn `"\b(fn|let)"` into a rule matching
-    /// the letter b.
+    /// Preserve unknown escapes such as `\b` for downstream regex parsers.
     #[test]
     fn an_unknown_escape_keeps_its_backslash() {
         assert_eq!(
@@ -178,10 +168,7 @@ mod test {
         );
     }
 
-    /// A doubled backslash is one backslash, so the two ways of writing a
-    /// grammar's escapes -- `"\\b"` and `"\b"` -- still arrive as the same
-    /// pattern, and a string can still contain a literal backslash followed by
-    /// an n.
+    /// A doubled backslash decodes once; a following `n` remains literal.
     #[test]
     fn a_doubled_backslash_is_one_backslash() {
         assert_eq!(
@@ -222,14 +209,12 @@ mod test {
 
     #[test]
     fn test_numeric_edge_cases() {
-        // Valid cases
         let input = "123.456 0.001 100 ";
         let tokens = lex_all(input).unwrap();
         assert_eq!(tokens[0], Token::Number(123.456));
         assert_eq!(tokens[1], Token::Number(0.001));
         assert_eq!(tokens[2], Token::Number(100.0));
 
-        // Invalid: Multiple dots
         let input_err = "1.2.3 ";
         let result = lex_all(input_err);
         assert!(matches!(result, Err(ParserError::NumberParseError(_))));

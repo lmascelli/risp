@@ -7,9 +7,7 @@ mod tests {
 
     #[test]
     fn a_nested_scope_does_not_refill_the_budget() {
-        // The point of the depth counter: code that re-enters the evaluator
-        // mid-command must keep spending the budget it already has, rather
-        // than quietly being handed a fresh one.
+        // Reentrant evaluation must spend the enclosing scope's remaining budget.
         let meter = FuelMeter::new(1_000);
 
         let outer = meter.begin();
@@ -40,8 +38,7 @@ mod tests {
 
     #[test]
     fn consume_spends_the_last_unit_and_then_reports_exhaustion() {
-        // The old editor-side check was `remaining > amount`, which refused to
-        // spend the final unit, and it decremented with a wrapping `fetch_sub`.
+        // Spending the final unit succeeds; the following charge must not wrap the counter.
         let meter = FuelMeter::new(10);
         let _scope = meter.begin();
         meter
@@ -50,18 +47,8 @@ mod tests {
         assert_eq!(meter.consume(1).unwrap_err(), Exhausted);
     }
 
-    // ====================================================================== //
-    //  A spawned thread's budget
-    //
-    //  Two properties, tested first on the meter alone and then through the
-    //  `(spawn ...)` special form that is supposed to wire them up:
-    //
-    //    1. the counter is per-thread, so what a child spends is invisible to
-    //       its parent and vice versa;
-    //    2. a child starts on the meter's *configured* budget, which is what
-    //       `arm_thread` is for -- without it the child would silently run on
-    //       the compile-time `DEFAULT_FUEL` instead.
-    // ====================================================================== //
+    // Spawned threads must use the configured budget and keep fuel independent
+    // of their parent, both through the meter and the Lisp `spawn` form.
 
     #[test]
     fn a_spawned_thread_does_not_inherit_the_parents_remaining_fuel() {
@@ -73,9 +60,7 @@ mod tests {
 
         let child = Arc::clone(&meter);
         std::thread::spawn(move || {
-            // No `arm_thread` here on purpose: the child starts on the
-            // thread_local const initialiser, which is DEFAULT_FUEL -- not the
-            // single unit the parent has left, and not zero.
+            // Without `arm_thread`, a new thread starts on `DEFAULT_FUEL`.
             child
                 .consume(DEFAULT_FUEL)
                 .expect("a fresh thread starts from DEFAULT_FUEL");
@@ -84,8 +69,7 @@ mod tests {
         .join()
         .expect("the child thread panicked");
 
-        // The child spent an entire default budget; none of it came out of the
-        // parent's counter.
+        // The child's consumption must not affect its parent.
         meter
             .consume(1)
             .expect("the parent still holds its last unit");
@@ -94,8 +78,7 @@ mod tests {
 
     #[test]
     fn arm_thread_starts_a_thread_on_the_configured_budget() {
-        // 500 is deliberately nothing like DEFAULT_FUEL, so this distinguishes
-        // "armed from the meter" from "fell back to the const initialiser".
+        // Use a value distinct from `DEFAULT_FUEL` to detect a missing reset.
         let meter = Arc::new(FuelMeter::new(500));
         let child = Arc::clone(&meter);
         std::thread::spawn(move || {
@@ -109,12 +92,8 @@ mod tests {
         .expect("the child thread panicked");
     }
 
-    // ---------- and the same two properties through `(spawn ...)` ----------
 
-    /// A host context that actually meters, unlike the `()` used as a context
-    /// elsewhere in these tests. `begin_thread_evaluation` is the wiring under
-    /// test here: `(spawn ...)` is supposed to call it on the new thread, and
-    /// nothing else ever does.
+    /// Metering host that arms each spawned evaluation through `begin_thread_evaluation`.
     #[derive(Clone, Debug)]
     struct FuelCtx {
         fuel: Arc<FuelMeter>,
@@ -152,8 +131,7 @@ mod tests {
     fn fuel_env(budget: u32) -> (Arc<Env<FuelCtx>>, FuelCtx) {
         let env = Env::new_root();
         setup_base_env(env.clone());
-        // Counts how far a spawned body got round its loop, so a test can bound
-        // the child's work without measuring time.
+        // Count background iterations to check the child's budget without relying on timing.
         env.set_function(
             "tick!".into(),
             LispExp::primitive(
@@ -298,15 +276,9 @@ mod tests {
         });
     }
 
-    /// `(spawn ...)` is fire-and-forget -- it returns nil immediately and never
-    /// joins -- so the only thing to wait on is the effect.
-    ///
-    /// The cap is generous because a *failing* run is the slow one: a child
-    /// that was never armed still dies eventually, just after ten million
-    /// steps rather than a few thousand. Waiting that out lets the assertion
-    /// after the wait report what actually went wrong instead of the test
-    /// bailing out here with nothing to say. A healthy run leaves this loop on
-    /// its first or second pass.
+    /// Wait for the effect because `spawn` does not join. The timeout also allows
+    /// an incorrectly armed thread to exhaust `DEFAULT_FUEL`, so the test can
+    /// report the budget mismatch.
     fn wait_for(ctx: &FuelCtx, needle: &str) -> bool {
         for _ in 0..2_000 {
             if ctx
@@ -343,18 +315,14 @@ mod tests {
             "the child never reported running out of fuel"
         );
 
-        // The child just burned a whole 30_000-step budget. Were the counter
-        // shared rather than thread-local, there would be nothing left here.
+        // Exhausting the child's allowance must not consume the parent's fuel.
         eval_script("(setq i 0) (while (< i 500) (setq i (+ i 1)))", env, &ctx)
             .expect("the child's exhaustion must not touch the parent's counter");
     }
 
     #[test]
     fn a_spawned_thread_is_armed_from_the_meter_not_the_compile_time_default() {
-        // A tiny configured budget. Had `(spawn ...)` not armed the child, it
-        // would have started on DEFAULT_FUEL -- five thousand times larger --
-        // and got orders of magnitude further before dying. Counting iterations
-        // makes that observable without timing anything.
+        // A small configured budget makes a missing thread reset visible in iteration counts.
         let (env, ctx) = fuel_env(2_000);
         eval_script("(spawn (lambda () (while t (tick!))))", env, &ctx).expect("spawn failed");
         assert!(

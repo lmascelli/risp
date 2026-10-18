@@ -1,8 +1,4 @@
-//! Cons cells, and everything made of them.
-//!
-//! The largest section, and the oldest: a Lisp is its list operations. `car`
-//! and `cdr` walk the chain in place; most of the rest materialise it, which
-//! is why they charge fuel per element.
+//! List primitives. Traversals charge fuel per element.
 use super::*;
 
 const ADD_TO_LIST_DOC: &str = "(add-to-list LIST-VAR &rest ELEMENTS): Prepend each of \
@@ -30,9 +26,6 @@ fn primitive_add_to_list<T: LispContext>(
         })
     } else {
         if let LispExp::Symbol(list_name) = &args[0] {
-            // `nil` is now the empty list, so `(defvar my-list nil)`
-            // followed by `add-to-list` works -- it did not before, when
-            // only the `Form` variant was accepted here.
             if let Some(list) = env.get_variable(&list_name).filter(is_list_value) {
                 let existing: Vec<LispExp<T>> = list.iter().collect();
                 let mut new_list = existing.clone();
@@ -216,8 +209,6 @@ fn primitive_cons<T: LispContext>(
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
     exact_arity(args, 2)?;
-    // One allocation, no copying of the tail: this is the whole point of
-    // the cons-cell representation. It used to rebuild the entire spine.
     Ok(LispExp::cons(args[0].clone(), args[1].clone()))
 }
 
@@ -252,13 +243,7 @@ fn primitive_nth<T: LispContext>(
     if n < 0.0 {
         return Ok(LispExp::nil());
     }
-    // Previously this cloned the entire backing vector via `expect_list`
-    // and then indexed it. Walking the chain is the same O(n) without the
-    // allocation and the n refcount bumps.
-    // A `Form` is syntax, not a list of data, and `iter()` yields nothing for
-    // one -- so without this check `(nth 0 some-form)` quietly returned nil
-    // where every sibling (car, cdr, length, mapcar) raises. A silent nil
-    // turns a mistake into wrong data instead of a diagnosable failure.
+    // Reject syntax nodes explicitly: their iterator would otherwise return no items.
     match &args[1] {
         LispExp::Cons(_) => {}
         other if other.is_nil() => return Ok(LispExp::nil()),
@@ -291,12 +276,9 @@ fn primitive_nthcdr<T: LispContext>(
 ) -> Result<LispExp<T>, EvalError<T>> {
     exact_arity(args, 2)?;
     let n = expect_number(&args[0])?.max(0.0) as usize;
-    // Walking to the nth cell and returning it shares the tail instead of
-    // copying it, so `nthcdr` is now allocation-free.
     let mut cursor = args[1].clone();
     for _ in 0..n {
-        // Charged a cell at a time rather than `n` up front: `n` may be far
-        // past the end of a short list, and only cells actually walked are work.
+        // Charge only visited cells; the requested index may exceed the list length.
         charge(ctx, 1)?;
         match &cursor {
             LispExp::Cons(cell) => cursor = cell.cdr.clone(),
@@ -337,8 +319,7 @@ fn primitive_length<T: LispContext>(
             });
         }
     };
-    // `length` is O(n) in the sequence for every representation above, so it
-    // is priced as such rather than as the single step the evaluator charged.
+    // Charge sequence traversal in addition to the evaluator step.
     charge(ctx, len)?;
     Ok(LispExp::number(len as f64))
 }
@@ -578,13 +559,8 @@ fn primitive_identity<T: LispContext>(
     Ok(args[0].clone())
 }
 
-/// Register this module's primitives: cons cells, and everything made of them.
-///
-/// Called by [`super::setup_base_env`]. Here rather than there because a
-/// primitive's name, its implementation and its docstring are one fact in three
-/// pieces, and they were a thousand lines apart.
+/// Register this module's primitives and Lisp docstrings.
 pub(super) fn install<T: LispContext>(into: &Registry<T>) {
-    // List manipulation
     into.function("add-to-list", primitive_add_to_list, ADD_TO_LIST_DOC);
     into.function(
         "append-to-list",

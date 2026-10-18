@@ -5,7 +5,6 @@ mod tests {
     use std::sync::{Arc, RwLock};
     use std::time::Duration;
 
-    // A thread-safe dummy host context
     #[derive(Clone, Debug)]
     struct ThreadCtx {
         pub host_counter: Arc<RwLock<usize>>,
@@ -19,14 +18,12 @@ mod tests {
         fn log_diagnostic(&self, _msg: &str) {}
     }
 
-    // Required for the generic bound T: PartialEq
     impl PartialEq for ThreadCtx {
         fn eq(&self, other: &Self) -> bool {
             Arc::ptr_eq(&self.host_counter, &other.host_counter)
         }
     }
 
-    // Helper to evaluate multiple expressions easily by wrapping them in a progn
     fn eval_script<T: LispContext>(
         script: &str,
         env: Arc<Env<T>>,
@@ -41,10 +38,8 @@ mod tests {
     fn setup_thread_env() -> (Arc<Env<ThreadCtx>>, ThreadCtx) {
         let env = Env::new_root();
 
-        // Load the atom, deref, reset, and funcall primitives
         setup_base_env(env.clone());
 
-        // Inject a sleep primitive to safely test async execution delays
         env.set_function(
             "sleep-ms".into(),
             LispExp::primitive(
@@ -52,13 +47,12 @@ mod tests {
                     if let Some(LispExp::Number(ms)) = args.first() {
                         std::thread::sleep(Duration::from_millis(*ms as u64));
                     }
-                    Ok(LispExp::form(vec![])) // return nil
+                    Ok(LispExp::form(vec![]))
                 },
                 None,
             ),
         );
 
-        // Inject a primitive that mutates the Host Context directly
         env.set_function(
             "bump-host!".into(),
             LispExp::primitive(
@@ -96,8 +90,7 @@ mod tests {
     fn test_spawn_async_execution_and_synchronization() {
         let (env, mut ctx) = setup_thread_env();
 
-        // Script: Initialize an atom to 0.
-        // Spawn a background thread that sleeps for 50ms, then updates the atom to 42.
+        // The background thread delays its write so the test can observe both states.
         let script = r#"
             (setq shared-val (make-atom 0.0))
             (spawn (lambda ()
@@ -108,18 +101,16 @@ mod tests {
 
         eval_script(script, env.clone(), &mut ctx).unwrap();
 
-        // IMMEDIATE ASSERTION:
-        // The main thread continues instantly. The atom should STILL be 0.0 here!
+        // Check the state before the delayed background update.
         let immediate_val = eval_script("(deref shared-val)", env.clone(), &mut ctx).unwrap();
         assert_eq!(immediate_val, LispExp::Number(0.0));
 
-        // SYNCHRONIZATION:
-        // Spinlock/poll until the background thread finishes its sleep and updates the atom.
+        // Poll for the background effect because `spawn` exposes no join handle.
         let mut timeout = 0;
         loop {
             let current_val = eval_script("(deref shared-val)", env.clone(), &mut ctx).unwrap();
             if current_val == LispExp::Number(42.0) {
-                break; // Thread successfully completed!
+                break;
             }
 
             std::thread::sleep(Duration::from_millis(10));
@@ -135,8 +126,7 @@ mod tests {
     fn test_multiple_threads_mutating_host_context() {
         let (env, mut ctx) = setup_thread_env();
 
-        // Spawn 10 independent background threads.
-        // Each thread sleeps for a short random-ish time, then mutates the Rust Host context.
+        // Each spawned thread increments the shared host state once.
         let script = r#"
             (defun spawn-worker (delay)
                 (spawn (lambda ()
@@ -158,14 +148,11 @@ mod tests {
 
         eval_script(script, env.clone(), &mut ctx).unwrap();
 
-        // Wait for all 10 threads to finish (max sleep is 55ms, we wait 150ms to be safe)
+        // Allow the delayed background calls to finish before checking the counter.
         std::thread::sleep(Duration::from_millis(150));
 
-        // Read the host counter natively in Rust
         let final_count = *ctx.host_counter.read().unwrap();
 
-        // If data-races were possible, this number would be unpredictable.
-        // Thanks to Arc<RwLock<T>> and pure lexical environment cloning, it is strictly 10.
         assert_eq!(final_count, 10);
     }
 }

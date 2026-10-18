@@ -1,8 +1,4 @@
-//! Calling, evaluating, and leaving by a side door.
-//!
-//! `funcall` and `apply`, `eval` and its string forms, the two ways out that
-//! are not a return -- `throw` and `signal` -- and the two that read a
-//! docstring back.
+//! Function invocation, evaluation, non-local exits, and documentation lookup.
 use super::*;
 
 const FUNCALL_DOC: &str = "(funcall FUNCTION &rest ARGS): Call FUNCTION with ARGS. \
@@ -20,8 +16,6 @@ fn primitive_funcall<T: LispContext>(
 ) -> Result<LispExp<T>, EvalError<T>> {
     some_arguments(args)?;
 
-    // Because funcall is a normal primitive, its arguments are already evaluated.
-    // args[0] is the Lambda object itself, args[1..] are the arguments passed to it.
     let func_obj = &args[0];
     let func_args = &args[1..];
 
@@ -118,12 +112,7 @@ fn primitive_eval_string_safe<T: LispContext>(
             got: 0,
         })
     } else if let LispExp::String(source) = &args[0] {
-        // A failed nested `eval` below may leave frames pushed (per the
-        // `push_call_frame` protocol, a failed call's frame stays put).
-        // Since we're about to swallow that failure into a return value
-        // instead of propagating it, restore the frame stack to how it
-        // was before we started, or those frames would leak into whatever
-        // *actually* uncaught error is reported next.
+        // The error is returned as data, so discard frames left by the failed evaluation.
         let depth_before = ctx.call_frame_depth();
         let mut parser = Parser::new(source);
         let result = match parser.next() {
@@ -237,10 +226,7 @@ fn primitive_variable_doc<T: LispContext>(
         ctx.log_diagnostic(&format!("{err:?}"));
         return err;
     };
-    // The property first, and on its own: a documented variable that has not
-    // been given a value yet -- `(defvar x nil "...")' aside, `(defvar x)'
-    // binds nothing -- still has documentation, and answering "Undocumented"
-    // because nothing is bound would be answering a different question.
+    // Documentation belongs to the symbol, even when it has no variable binding.
     if let Some(doc) = env.get_property(name, VARIABLE_DOCUMENTATION) {
         return Ok(doc);
     }
@@ -254,11 +240,6 @@ fn primitive_variable_doc<T: LispContext>(
     Ok(nil!())
 }
 
-// The two ways out of an evaluation that are not a return.
-//
-// Under the `Lists` banner in the file this came from, for no reason anyone
-// could reconstruct -- neither of them is about lists. They are here because
-// they are control flow, which is what the rest of this file is.
 const THROW_DOC: &str = "(throw TAG VALUE): Jump to the innermost enclosing \
                  `catch' whose tag equals TAG, making that `catch' return \
                  VALUE. Signals an error if no such `catch' is active.\n\n\
@@ -282,14 +263,8 @@ const SIGNAL_DOC: &str = "(signal SYMBOL DATA): Raise the error condition SYMBOL
 
 raise!(primitive_signal, Signal { symbol, data });
 
-/// Register this module's primitives: calling, evaluating, and leaving by a side door.
-///
-/// Called by [`super::setup_base_env`]. Here rather than there because a
-/// primitive's name, its implementation and its docstring are one fact in three
-/// pieces, and they were a thousand lines apart.
+/// Register this module's primitives and Lisp docstrings.
 pub(super) fn install<T: LispContext>(into: &Registry<T>) {
-    // ------------------------------- Functions  ------------------------------
-    // Functions
     into.function("funcall", primitive_funcall, FUNCALL_DOC);
     into.function("eval", primitive_eval, EVAL_DOC);
     into.function("throw", primitive_throw, THROW_DOC);

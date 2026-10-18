@@ -1,25 +1,10 @@
-//! Emacs-Lisp-compliance tests for `lisp.rs` in isolation.
-//!
-//! Everything exercised here comes from the parser/evaluator core
-//! (`lisp.rs`) alone: self-evaluating literals, truthiness, and every
-//! special form (`if`, `while`, `setq`, `defun`, `lambda`, `progn`, `let`,
-//! `let*`, `cond`, `and`, `or`, `when`, `unless`, `dolist`, `dotimes`,
-//! `defvar`, `defconst`, `prog1`, `prog2`, `unwind-protect`, `defmacro`,
-//! backquote/unquote/unquote-splicing). None of these tests call
-//! `setup_base_env` from `lisp/base/`, and no environment used below is
-//! seeded with anything beyond three tiny, locally-defined primitives
-//! (`+`, `cons`, `eq`) needed to give a few forms (`dolist`, `dotimes`,
-//! `defmacro`) something to compute with. This keeps the suite a pure
-//! check of `lisp.rs`'s own Elisp-compliance, independent of whatever the
-//! "real" standard library in `lisp/base/` does or how it evolves.
+//! Core special-form and reader tests, independent of the standard primitives.
+//! Environments contain only the locally defined `+`, `cons`, and `eq` helpers.
 #[cfg(test)]
 mod tests {
     use crate::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
 
-    // ===========================================================
-    // Minimal, self-contained primitives -- NOT from base_env.rs.
-    // ===========================================================
 
     fn native_add(
         args: &[LispExp<()>],
@@ -68,8 +53,7 @@ mod tests {
         Ok(LispExp::boolean(args[0] == args[1]))
     }
 
-    /// A root environment with *no* `setup_base_env` call: just the raw
-    /// `lisp.rs` special forms plus the three primitives above.
+    /// An environment with only the three local helper primitives.
     fn bare_env() -> Arc<Env<()>> {
         let env = Env::new_root();
         env.set_function("+".into(), LispExp::primitive(native_add, None));
@@ -80,8 +64,7 @@ mod tests {
 
     fn eval_str(source: &str, env: Arc<Env<()>>) -> Result<LispExp<()>, EvalError<()>> {
         let mut ctx = ();
-        // Wrapping in `progn` lets a test script contain several top-level
-        // forms while still handing `eval` a single AST node.
+        // Use one `progn` expression to evaluate each complete test script.
         let wrapped = format!("(progn {})", source);
         let mut parser = Parser::new(&wrapped);
         let ast = parser.next().expect("failed to parse test script");
@@ -98,13 +81,10 @@ mod tests {
         eval_str(source, bare_env()).expect_err(&format!("expected `{source}` to fail"))
     }
 
-    // ===========================================================
     // Self-evaluating literals & truthiness
-    // ===========================================================
 
     #[test]
     fn nil_and_t_self_evaluate_with_no_environment_at_all() {
-        // Not even `bare_env()` -- a totally empty root environment.
         let env = Env::<()>::new_root();
         assert_eq!(eval_str("nil", env.clone()).unwrap(), LispExp::nil());
         assert_eq!(eval_str("t", env).unwrap(), LispExp::t());
@@ -134,8 +114,7 @@ mod tests {
 
     #[test]
     fn truthiness_only_nil_and_empty_list_are_false() {
-        // Elisp truthiness: everything except `nil`/`()` is true, notably
-        // including 0, "", and empty vectors/maps -- unlike many Lisps.
+        // Zero, empty strings, and empty vectors and maps are truthy; only nil is false.
         assert_eq!(eval_ok("(if 0 'yes 'no)"), LispExp::symbol("yes".into()));
         assert_eq!(eval_ok("(if \"\" 'yes 'no)"), LispExp::symbol("yes".into()));
         assert_eq!(eval_ok("(if [] 'yes 'no)"), LispExp::symbol("yes".into()));
@@ -145,9 +124,7 @@ mod tests {
         assert_eq!(eval_ok("(if () 'yes 'no)"), LispExp::symbol("no".into()));
     }
 
-    // ===========================================================
     // quote
-    // ===========================================================
 
     #[test]
     fn quote_prevents_evaluation() {
@@ -170,9 +147,7 @@ mod tests {
         assert_eq!(eval_err("(quote a b)"), EvalError::QuoteNotOneArgument);
     }
 
-    // ===========================================================
     // if / while
-    // ===========================================================
 
     #[test]
     fn if_selects_the_right_branch() {
@@ -197,7 +172,6 @@ mod tests {
                 (setq i (+ i 1)))
             acc
         ";
-        // 0 + 1 + 2 + 3 + 4 = 10
         assert_eq!(eval_ok(script), LispExp::number(10.0));
     }
 
@@ -206,9 +180,7 @@ mod tests {
         assert_eq!(eval_ok("(while nil 1)"), LispExp::nil());
     }
 
-    // ===========================================================
     // setq
-    // ===========================================================
 
     #[test]
     fn setq_creates_and_updates_variables_and_returns_last_value() {
@@ -220,8 +192,6 @@ mod tests {
         assert_eq!(env.get_variable("a"), Some(LispExp::number(1.0)));
         assert_eq!(env.get_variable("b"), Some(LispExp::number(2.0)));
 
-        // Re-setting an existing variable updates it in place rather than
-        // shadowing.
         eval_str("(setq a 99)", env.clone()).unwrap();
         assert_eq!(env.get_variable("a"), Some(LispExp::number(99.0)));
     }
@@ -231,9 +201,7 @@ mod tests {
         assert_eq!(eval_err("(setq 1 2)"), EvalError::SetqSymbolRequired);
     }
 
-    // ===========================================================
     // defun / lambda / progn
-    // ===========================================================
 
     #[test]
     fn defun_and_lambda_share_call_semantics() {
@@ -241,8 +209,6 @@ mod tests {
             eval_ok("(defun sq (x) (+ x x)) (sq 21)"),
             LispExp::number(42.0)
         );
-        // Immediately-invoked anonymous lambda -- no `defun`/`funcall`
-        // needed, the evaluator dispatches on the evaluated head directly.
         assert_eq!(eval_ok("((lambda (x) (+ x 1)) 41)"), LispExp::number(42.0));
     }
 
@@ -256,8 +222,7 @@ mod tests {
 
     #[test]
     fn functions_and_variables_are_looked_up_in_separate_namespaces() {
-        // Classic Lisp-2 behaviour: binding `x` as a variable does not
-        // make `(x)` callable, and vice versa.
+        // Variable and function namespaces are independent.
         let env = bare_env();
         eval_str("(setq x 10)", env.clone()).unwrap();
         assert_eq!(
@@ -275,14 +240,11 @@ mod tests {
         assert_eq!(eval_ok("(progn)"), LispExp::nil());
     }
 
-    // ===========================================================
     // let / let*
-    // ===========================================================
 
     #[test]
     fn let_bindings_are_evaluated_in_parallel_against_the_outer_scope() {
-        // `y` must NOT see the shadowed `x` -- both binding forms are
-        // evaluated against the environment `let` was called in.
+        // Parallel `let` initializers see the enclosing value of `x`.
         let script = "(setq x 1) (let ((x 2) (y x)) y)";
         assert_eq!(eval_ok(script), LispExp::number(1.0));
     }
@@ -321,9 +283,7 @@ mod tests {
 
     #[test]
     fn nested_functions_are_lexically_scoped_not_dynamically() {
-        // This VM is deliberately lexically scoped (closer to modern
-        // Elisp with `lexical-binding: t`): a function sees the scope it
-        // was *defined* in, not the caller's scope.
+        // Closures read the environment captured at definition, not the caller's scope.
         let script = "
             (setq x 10)
             (defun get-x () x)
@@ -332,9 +292,7 @@ mod tests {
         assert_eq!(eval_ok(script), LispExp::number(10.0));
     }
 
-    // ===========================================================
     // cond / and / or / when / unless
-    // ===========================================================
 
     #[test]
     fn cond_evaluates_clauses_in_order_and_stops_at_the_first_truthy_test() {
@@ -399,9 +357,7 @@ mod tests {
         assert_eq!(eval_ok("(unless t 1 2 3)"), LispExp::nil());
     }
 
-    // ===========================================================
     // dolist / dotimes
-    // ===========================================================
 
     #[test]
     fn dolist_iterates_the_list_and_evaluates_the_optional_result_form() {
@@ -450,13 +406,10 @@ mod tests {
             (dotimes (i 5 acc)
                 (setq acc (+ acc i)))
         ";
-        // 0+1+2+3+4 = 10
         assert_eq!(eval_ok(script), LispExp::number(10.0));
     }
 
-    // ===========================================================
     // defvar / defconst
-    // ===========================================================
 
     #[test]
     fn defvar_only_initializes_the_first_time() {
@@ -481,9 +434,7 @@ mod tests {
         assert_eq!(env.get_variable("y"), None);
     }
 
-    // ===========================================================
     // prog1 / prog2 / unwind-protect
-    // ===========================================================
 
     #[test]
     fn prog1_returns_the_first_forms_value() {
@@ -529,18 +480,11 @@ mod tests {
         );
     }
 
-    // ===========================================================
     // defmacro + backquote/unquote/unquote-splicing
-    // ===========================================================
 
     #[test]
     fn defmacro_arguments_are_not_evaluated_before_expansion() {
-        // `boom` is unbound. If macro arguments were evaluated eagerly
-        // like a function's, `(capture boom)` would raise
-        // `UnboundVariable` before the macro body ever ran. Because
-        // they're passed through as raw, unevaluated AST and only
-        // wrapped in `quote` by the macro body, the call succeeds and
-        // simply returns the symbol `boom` itself.
+        // Keep `boom` unevaluated until the macro wraps it in `quote`.
         let env = bare_env();
         eval_str("(defmacro capture (x) `(quote ,x))", env.clone()).unwrap();
         assert_eq!(
@@ -644,17 +588,12 @@ mod tests {
         assert_eq!(eval_err("(backquote)"), EvalError::BackquoteNotOneArgument);
     }
 
-    // ===========================================================
     // Closures / funarg (lexical scoping sanity check with zero
     // primitives beyond the local `+`)
-    // ===========================================================
 
     #[test]
     fn lambdas_close_over_their_defining_environment() {
-        // `(make-adder 5)` is itself a compound head, so the evaluator
-        // evaluates it down to a `Lambda` first and then invokes that
-        // directly -- exercising closures without needing `funcall`
-        // (that primitive lives in `base_env.rs`, not `lisp.rs`).
+        // The compound head evaluates to a closure, exercising calls without `funcall`.
         let script = "
             (defun make-adder (n) (lambda (x) (+ x n)))
             ((make-adder 5) 37)
@@ -676,11 +615,7 @@ mod tests {
         );
     }
 
-    // ===========================================================
-    // &optional / &rest parameter lists (defun, lambda, and defmacro all
-    // share the same parsing/binding code, so a handful of tests on each
-    // form is enough to exercise it once rather than three times).
-    // ===========================================================
+    // Required, optional, and rest parameters share the parser and binder.
 
     #[test]
     fn optional_params_default_to_nil_when_omitted() {
@@ -708,10 +643,7 @@ mod tests {
                 LispExp::number(4.0),
             ])
         );
-        // No extra arguments -> the rest param is bound to the empty list,
-        // not left unbound. With cons cells there is only one empty list:
-        // `nil`. There used to be two representations of it, and this
-        // assertion existed to pin down which one you got.
+        // A missing rest sequence must bind `nil` rather than leave the name unbound.
         assert_eq!(
             eval_ok("(defun args-of (a &rest more) more) (args-of 1)"),
             LispExp::nil()
@@ -773,12 +705,7 @@ mod tests {
 
     #[test]
     fn defmacro_supports_optional_and_rest_params_too() {
-        // Macros go through the same parser/binder as defun/lambda. `list`
-        // isn't in this file's deliberately bare environment (see the
-        // module doc comment), so build the quoted form with `cons` alone:
-        // `items` is already bound to the raw, unevaluated call-site args
-        // as a list, so `(cons 'quote (cons items nil))` expands to
-        // `(quote (1 2 3))`, which evaluates back to the plain list.
+        // Use `cons` to build `(quote (1 2 3))` without installing the standard library.
         let script = "
             (defmacro my-list (&rest items) (cons 'quote (cons items nil)))
         ";
@@ -806,12 +733,10 @@ mod tests {
 
     #[test]
     fn param_markers_reject_nonsensical_placement() {
-        // &optional after &rest.
         assert_eq!(
             eval_err("(defun f (a &rest b &optional c) 1)"),
             EvalError::DefunMisplacedParamMarker
         );
-        // &optional appearing twice.
         assert_eq!(
             eval_err("(defun f (a &optional b &optional c) 1)"),
             EvalError::DefunMisplacedParamMarker

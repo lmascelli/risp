@@ -46,7 +46,7 @@ mod tests {
 
     #[test]
     fn a_wrapped_text_keeps_its_own_line_numbers() {
-        // What eval_file reads: the file behind a line of its own.
+        // Compensate for a synthetic first line while preserving file line numbers.
         let (outer, map) = read_located("(progn\n(a)\n  (b))", 0);
         let body = form(&outer);
         assert_eq!(map.locate(body), at(0, 1, 2, 6));

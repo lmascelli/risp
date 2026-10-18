@@ -1,32 +1,19 @@
-//!
-//! Add a general description of the base types here
-//!
+//! Closure, continuation, and shared runtime types.
 
 use super::{Env, EvalError, LispContext, LispExp};
 use std::sync::{Arc, RwLock};
 
-// ---------------------------------  Cons cell  -------------------------------
-
+/// A runtime list cell whose tail may be another cell or any Lisp value.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConsCell<T: LispContext> {
+    /// Value at the head of the cell.
     pub car: LispExp<T>,
+    /// Remaining list or dotted tail.
     pub cdr: LispExp<T>,
 }
 
-/// Unlink a cons chain iteratively when it is dropped.
-///
-/// Without this, dropping a list recurses once per cell -- `Arc<ConsCell>`
-/// drops its `cdr`, which drops the next cell, and so on -- so letting go of a
-/// list of a few tens of thousands of elements overflows the stack and
-/// *aborts* the process. Not a catchable panic: `condition-case` cannot help,
-/// and the editor simply dies. Building a list that long is ordinary Lisp, and
-/// the crash happens when it goes out of scope, far from anything that looks
-/// like a cause.
-///
-/// The loop walks the chain taking ownership of each cell whose last reference
-/// this is, replacing its `cdr` with `nil` before the cell itself is dropped,
-/// so no drop ever nests. A cell that is still shared ends the walk: its tail
-/// belongs to someone else and is not ours to unlink.
+/// Unlink uniquely owned cons tails iteratively to avoid recursive stack overflow.
+/// Stop at a shared cell: its remaining owners still need the tail.
 impl<T: LispContext> Drop for ConsCell<T> {
     fn drop(&mut self) {
         let mut next = std::mem::replace(&mut self.cdr, LispExp::nil());
@@ -39,6 +26,7 @@ impl<T: LispContext> Drop for ConsCell<T> {
     }
 }
 
+/// Iterator over the proper prefix of a cons chain, excluding a dotted tail.
 pub struct ConsIter<T: LispContext> {
     pub(super) cursor: LispExp<T>,
 }
@@ -57,28 +45,25 @@ impl<T: LispContext> Iterator for ConsIter<T> {
     }
 }
 
-// ----------------------------------  Lambda ----------------------------------
-
+/// A lexical closure with required, optional, and rest parameters.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lambda<T: LispContext> {
-    /// Required parameters -- a call must supply exactly one argument for
-    /// each of these.
+    /// Required parameter names, in argument order.
     pub params: Vec<String>,
-    /// `&optional` parameters. A call may omit any suffix of these;
-    /// omitted ones are bound to `nil`.
+    /// Optional parameter names; omitted arguments bind to nil.
     pub optionals: Vec<String>,
-    /// The `&rest` parameter, if any. Bound to a list of every argument
-    /// past `params`/`optionals`. `None` means the lambda has no `&rest`
-    /// parameter, so supplying more arguments than `params.len() +
-    /// optionals.len()` is an arity error.
+    /// Parameter collecting arguments beyond the required and optional ones.
+    /// Without it, extra arguments cause an arity error.
     pub rest: Option<String>,
+    /// Body expressions, evaluated in order.
     pub body: Vec<LispExp<T>>,
+    /// Captured lexical environment used as the parent of each call scope.
     pub env: Arc<Env<T>>,
+    /// Optional Lisp docstring.
     pub doc: Option<Arc<String>>,
 }
 
-// --------------------------------  Shared Atom -------------------------------
-
+/// A mutable Lisp value shared through a read/write lock. Equality uses allocation identity.
 #[derive(Clone, Debug)]
 pub struct SharedAtom<T: LispContext>(pub Arc<RwLock<LispExp<T>>>);
 
@@ -88,91 +73,52 @@ impl<T: LispContext> PartialEq for SharedAtom<T> {
     }
 }
 
-// -----------------------------------  Fiber ----------------------------------
-
-/// One suspended block of a fiber: the forms it had left, and where it was.
+/// A suspended body or loop, resumed from the innermost frame outward.
 ///
-/// # What a continuation is, here
-///
-/// A fiber that yields has to come back to the middle of its own program, and
-/// the evaluator is an ordinary recursive Rust function -- the place it was is
-/// the Rust stack, which is exactly what unwinding destroys. So on the way out
-/// each block that *can* say where it was says so, and the list of those
-/// answers is the continuation. Resuming replays them from the inside out.
-///
-/// # Why this is enough, and what it costs
-///
-/// A block can only record its position when the value of what it was running
-/// is going to be thrown away -- a statement in a body, an iteration of a
-/// loop. In *those* positions, coming back means "run the rest of these
-/// forms", which is what this holds. In any other position -- an argument
-/// half-way through being evaluated, a condition being decided, a primitive
-/// part-way through its own Rust code -- coming back would mean delivering a
-/// value into a computation that no longer exists, and nothing short of
-/// rewriting the evaluator as a state machine can do that.
-///
-/// So `(yield)` is refused there rather than half-supported. See
-/// `EvalError::YieldNotAllowed`. That is the same boundary Lua draws around
-/// its coroutines, and it is drawn here by construction rather than by a list
-/// of checks: permission to yield is *granted* by the positions that can
-/// record, and consumed by the next evaluation, so a position that was never
-/// taught to record never has it to give away.
+/// Only statement positions can record continuations. Yields in arguments,
+/// conditions, or native primitive execution return [`EvalError::YieldNotAllowed`].
 #[derive(Debug)]
 pub enum Frame<T: LispContext> {
-    /// The rest of a body -- a `progn`, a `let`, a function -- run for effect
-    /// in `env`, starting at `from`.
+    /// Resume a body in `env` at `from`, retaining its final value.
     Body {
+        /// Expressions of the suspended block.
         forms: Vec<LispExp<T>>,
+        /// Index of the next expression to evaluate.
         from: usize,
+        /// Lexical environment retained by the continuation.
         env: Arc<Env<T>>,
     },
-    /// The rest of a `while` iteration, starting at `from`, and then the loop
-    /// itself: the condition is tested again and the body runs from the top,
-    /// exactly as if nothing had interrupted it.
+    /// Finish an interrupted `while` iteration, then retest the condition.
     While {
+        /// Loop condition to retest after the interrupted iteration.
         condition: LispExp<T>,
+        /// Expressions of the suspended block.
         forms: Vec<LispExp<T>>,
+        /// Index of the next expression to evaluate.
         from: usize,
+        /// Lexical environment retained by the continuation.
         env: Arc<Env<T>>,
     },
 }
 
-/// Identity, for the reason [`SharedAtom`]'s is identity: a frame is a
-/// position in a running program, and two of them are the same only when they
-/// are the same one. Comparing them structurally would mean comparing the
-/// captured `Env`s, whose own `PartialEq` is `unreachable!()`.
-///
-/// It exists at all only because `EvalError` derives `PartialEq` and carries a
-/// suspension, and tests compare `EvalError`s.
+/// Frames compare by identity because they represent positions in a running program.
 impl<T: LispContext> PartialEq for Frame<T> {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other)
     }
 }
 
-/// A suspendable program: the stack of blocks it still has to finish.
-///
-/// # Why there is nothing else in here
-///
-/// There used to be two more fields -- the top-level forms the fiber was made
-/// from, and the environment to run them in -- alongside the stack. They were
-/// the same thing said twice: "the forms from index 0 of this body, in this
-/// environment" is exactly what a [`Frame::Body`] says, so a freshly-made
-/// fiber is a stack with one frame on it and `resume` needs only one path
-/// instead of two.
-///
-/// What is left is the whole of a coroutine's state. `pending` is where it is;
-/// `is_done` is whether there is anywhere left to be. Everything else -- the
-/// variables it can see, the loop it is inside, the function it is part-way
-/// through -- is inside the frames, because that is what a frame is.
+/// A fiber's remaining continuation and completion state.
 #[derive(Debug)]
 pub struct FiberState<T: LispContext> {
-    /// Innermost block first. Empty means the program has not been started or
-    /// has finished; `is_done` tells those two apart.
+    /// Innermost frame first. An empty stack can also mean the fiber is
+    /// currently running; consult `is_done` for completion.
     pub pending: Vec<Frame<T>>,
+    /// Whether the fiber has completed or terminated after an error.
     pub is_done: bool,
 }
 
+/// Shared fiber state protected by a read/write lock.
 #[derive(Clone, Debug)]
 pub struct SharedFiber<T: LispContext>(pub Arc<RwLock<FiberState<T>>>);
 
@@ -182,6 +128,52 @@ impl<T: LispContext> PartialEq for SharedFiber<T> {
     }
 }
 
-// --------------------------------  Primitive  --------------------------------
-
+/// Native function signature: evaluated arguments, call environment, and host context.
+///
+/// The environment is the caller's scope; a lambda instead uses its captured
+/// environment. Arguments are values, not syntax. Charge host fuel for expensive
+/// work and use [`LispExp::proper_list`] for runtime lists.
+///
+/// Return a value or an [`EvalError`]. This signature accepts a function pointer;
+/// register stateful host services through the context rather than a capturing closure.
+///
+/// # Example
+///
+/// ```
+/// use risp::{Env, EvalError, LispContext, LispExp, exact_arity};
+/// use std::sync::Arc;
+///
+/// #[derive(Clone, Debug, PartialEq)]
+/// struct Host;
+/// impl LispContext for Host {}
+///
+/// fn double(
+///     args: &[LispExp<Host>],
+///     _env: Arc<Env<Host>>,
+///     _ctx: &Host,
+/// ) -> Result<LispExp<Host>, EvalError<Host>> {
+///     exact_arity(args, 1)?;
+///     match &args[0] {
+///         LispExp::Number(n) => Ok(LispExp::number(n * 2.0)),
+///         value => Err(EvalError::WrongArgumentType {
+///             expected: "Number".into(),
+///             got: value.clone(),
+///         }),
+///     }
+/// }
+///
+/// let env = Env::new_root();
+/// env.set_function(
+///     "host-double".into(),
+///     LispExp::primitive(double, Some("(host-double NUMBER): Double NUMBER.".into())),
+/// );
+/// let value = risp::call_callable(
+///     &LispExp::symbol("host-double".into()),
+///     &[LispExp::number(21.0)],
+///     env,
+///     &Host,
+/// ).unwrap();
+/// assert_eq!(value, LispExp::number(42.0));
+/// ```
+///
 pub type LispPrimitive<T> = fn(&[LispExp<T>], Arc<Env<T>>, &T) -> Result<LispExp<T>, EvalError<T>>;

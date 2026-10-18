@@ -1,49 +1,23 @@
-//! ========================================================================== //
-//!               +------------------------------------------+
-//!               |  Execution metering for the interpreter. |
-//!               +------------------------------------------+
-//! The evaluator charges the host on every step through
-//! `LispContext::consume_fuel`, but how large a budget is, and when it
-//! refills, is host *policy*. This module supplies the *mechanism* that policy
-//! needs, so that each embedder does not have to re-derive the thread-local
-//! bookkeeping, the nesting rules, and the arithmetic edge cases for itself.
+//! Thread-local execution budgets and bounded cleanup reserves.
 //!
-//! It knows nothing about context. A host decides what constitutes
-//! one metered unit of work by wrapping it in [`FuelMeter::begin`].
-//! ========================================================================== //
+//! Hosts connect [`FuelMeter::consume`] to [`crate::LispContext::consume_fuel`]
+//! and define evaluation scopes with [`FuelMeter::begin`].
 
 use std::{
     cell::Cell,
     sync::atomic::{AtomicU32, Ordering},
 };
 
-/// Default steps one metered scope may run before it is aborted.
+/// Default fuel allowance: 10,000,000 execution units.
 ///
-/// This is a runaway-loop guard, not a resource quota: it exists so a mistyped
-/// `(while t ...)` cannot hang its host forever. Sized from the interpreter
-/// performance suite's measured cost per eval step -- roughly 100ns in release
-/// and 500ns in debug -- so a runaway scope costs about a second of
-/// unresponsiveness in release and a few seconds in debug before control comes
-/// back. Ordinary work uses a vanishing fraction of it.
+/// Fuel bounds charged work, not elapsed time; native primitives must charge
+/// for work beyond ordinary evaluation steps.
 pub const DEFAULT_FUEL: u32 = 10_000_000;
 
 thread_local! {
-    /// Steps remaining for the metered scope running on *this* thread.
-    ///
-    /// Thread-local rather than shared state on the meter, for two reasons.
-    /// Correctness: the `(spawn ...)` special form evaluates on a second
-    /// thread while sharing the host context, so a shared counter would let
-    /// that thread spend the foreground scope's budget -- and let a new
-    /// foreground scope refill it underneath a running background one. Speed:
-    /// only the owning thread can reach its own copy, so no synchronisation is
-    /// required at all, making this a plain `Cell` load/store rather than an
-    /// atomic read-modify-write on a line other cores may be contending for.
-    ///
-    /// The `const` initialiser avoids the hidden "has this thread initialised
-    /// it yet?" branch a non-const one would add to every access. It starts at
-    /// `DEFAULT_FUEL` rather than zero so that a thread which never opens a
-    /// scope is still *bounded* -- failing safe -- instead of either dying on
-    /// its first step or running unmetered.
+    /// Remaining fuel is thread-local so concurrent evaluations cannot spend
+    /// or refill each other's allowance. Threads without a scope start bounded
+    /// by `DEFAULT_FUEL`.
     static FUEL: Cell<u32> = const { Cell::new(DEFAULT_FUEL) };
 
     /// Nesting depth of [`FuelMeter::begin`] on this thread. Only the 0 -> 1
@@ -63,16 +37,9 @@ thread_local! {
     static UNWIND_SPENT: Cell<u64> = const { Cell::new(0) };
 }
 
-/// Guard returned by [`FuelMeter::begin`]; closes the scope when dropped.
+/// Guard that closes a metered scope when dropped.
 ///
-/// RAII rather than paired begin/end calls so that an early return or a `?`
-/// cannot leave the depth stuck above zero, which would permanently prevent
-/// any further refill.
-///
-/// It borrows nothing. The scope's whole state is the thread-local depth, so
-/// the guard never touches the meter again after `begin` has read the budget
-/// off it -- and a tether to the meter would have meant a host could not keep
-/// one behind a lock, which is exactly where a host's state usually lives.
+/// Keep it alive for the evaluation and drop it on the thread that created it.
 #[must_use = "the metered scope ends as soon as this guard is dropped"]
 pub struct FuelScope {
     _private: (),
@@ -108,32 +75,71 @@ impl Drop for UnwindBudget {
     }
 }
 
-/// A refillable execution budget shared by every thread of one host.
-///
-/// The configured budget lives here (shared, read once per scope); the
-/// remaining count lives in thread-local storage (private, touched every
-/// step). That split is deliberate: the hot counter never needs
-/// synchronisation, while the setting stays global and adjustable.
-/// What [`FuelMeter::consume`] reports when the budget is gone.
-///
-/// Deliberately not an `EvalError`: the meter is host-agnostic machinery and
-/// has no business naming the interpreter's error type, which is generic over
-/// the context. Callers map it to `EvalError::OutOfFuel`.
+/// The budget was exhausted. Map this result to [`crate::EvalError::OutOfFuel`]
+/// when implementing [`crate::LispContext::consume_fuel`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Exhausted;
 
+/// A configurable allowance for thread-local execution scopes.
+///
+/// Meters configure budgets, but remaining fuel and nesting depth are shared
+/// by all meters on the same thread. Nested scopes do not refill, even when
+/// opened through a different meter. Counters on different threads are independent.
+///
+/// # Example
+///
+/// ```
+/// use risp::{Env, EvalError, FuelMeter, LispContext, LispExp, Parser};
+/// use std::sync::Arc;
+///
+/// #[derive(Clone, Debug)]
+/// struct Host(Arc<FuelMeter>);
+///
+/// impl PartialEq for Host {
+///     fn eq(&self, other: &Self) -> bool {
+///         Arc::ptr_eq(&self.0, &other.0)
+///     }
+/// }
+///
+/// impl LispContext for Host {
+///     fn consume_fuel(&self, amount: u32) -> Result<(), EvalError<Self>> {
+///         self.0.consume(amount).map_err(|_| EvalError::OutOfFuel)
+///     }
+///
+///     fn begin_thread_evaluation(&self) {
+///         self.0.arm_thread();
+///     }
+///
+///     fn with_unwind<R>(&self, cleanup: impl FnOnce() -> R) -> R {
+///         self.0.with_unwind(100, cleanup)
+///     }
+/// }
+///
+/// let host = Host(Arc::new(FuelMeter::new(1_000)));
+/// let env = Env::new_root();
+/// risp::setup_base_env(env.clone());
+/// let form = Parser::new("(+ 20 22)").next::<Host>().unwrap();
+/// let _scope = host.0.begin();
+/// assert_eq!(risp::eval(&form, env, &host).unwrap(), LispExp::number(42.0));
+/// ```
+///
 #[derive(Debug)]
 pub struct FuelMeter {
     budget: AtomicU32,
 }
 
 impl FuelMeter {
+    /// Configure an allowance for future outermost scopes; does not refill this thread.
     pub fn new(budget: u32) -> Self {
         Self {
             budget: AtomicU32::new(budget),
         }
     }
 
+    /// Charge this thread's active allowance.
+    ///
+    /// Returns an exhaustion error when insufficient fuel remains. A failed charge
+    /// does not subtract fuel; cleanup may use its configured reserve.
     pub fn consume(&self, amount: u32) -> Result<(), Exhausted> {
         FUEL.with(|fuel| match fuel.get().checked_sub(amount) {
             Some(remaining) => {
@@ -169,10 +175,9 @@ impl FuelMeter {
         FuelScope { _private: () }
     }
 
-    /// Arm the calling thread's budget without opening a scope, for a freshly
-    /// spawned thread that has no enclosing scope to nest inside. Without this
-    /// such a thread would run on the compile-time `DEFAULT_FUEL` rather than
-    /// the host's configured budget.
+    /// Reset this thread to the configured budget without opening a scope.
+    ///
+    /// Use on a newly spawned thread; this also resets its cleanup reserve.
     pub fn arm_thread(&self) {
         FUEL.set(self.budget.load(Ordering::Relaxed));
         UNWIND_FUEL.set(None);
@@ -189,10 +194,9 @@ impl FuelMeter {
         });
     }
 
-    /// Set the budget future scopes receive, and top the current thread's
-    /// remaining fuel up to it -- so code that knows it will be expensive can
-    /// raise its own ceiling as its first act rather than having to restart.
-    /// This is also useful to embedders when configuring a host runtime.
+    /// Set the budget for future scopes and replace this thread's remaining fuel.
+    ///
+    /// The new value can raise or lower the current allowance.
     pub fn set_budget(&self, budget: u32) {
         self.budget.store(budget, Ordering::Relaxed);
         FUEL.set(budget);
@@ -230,30 +234,14 @@ impl FuelMeter {
     }
 }
 
-/// Set the calling thread's remaining fuel to exactly AMOUNT, whether that
-/// raises it or lowers it.
+/// Replace the calling thread's remaining fuel with `amount`.
 ///
-/// # Why this is not [`FuelMeter::grant`]
-///
-/// `grant` only ever raises, because it exists for a cleanup that must run
-/// after the budget is spent. This is for the opposite case: a host that runs
-/// *repeated, short* pieces of work on a thread of its own, and wants each one
-/// bounded by its own small allowance rather than by the editor-sized budget
-/// the thread would otherwise carry. Raising-only cannot express that -- the
-/// first turn would be handed `DEFAULT_FUEL` and a runaway one would hold the
-/// thread for a second.
-///
-/// # Why it is a free function
-///
-/// It sets a thread-local and reads no meter, so taking `&self` would be a
-/// parameter that exists only to look symmetrical -- and it would mean holding
-/// whatever lock the meter lives behind to touch state the meter does not own.
+/// This can raise or lower the allowance without changing any meter's budget.
 pub fn set_remaining(amount: u32) {
     FUEL.set(amount);
 }
 
-/// Run `body` with an effectively unlimited budget and report how much fuel it
-/// spent, alongside its result.
+/// Restore fuel counters when measurement ends, including during unwinding.
 struct RestoreFuel(u32, Option<u32>, Option<u32>, u64);
 
 impl Drop for RestoreFuel {
@@ -265,6 +253,11 @@ impl Drop for RestoreFuel {
     }
 }
 
+/// Run `body` with `u32::MAX` fuel and return `(result, units_spent)`.
+///
+/// Includes cleanup-reserve charges and restores the previous counters when
+/// the call ends, including during panic unwinding. The configured budget
+/// is unchanged; the measurement allowance is large but finite.
 pub fn measure<T, F: FnOnce() -> T>(
     meter: &FuelMeter,
     body: F,

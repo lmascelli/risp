@@ -1,8 +1,4 @@
-//! Ordering numbers.
-//!
-//! Variadic, like Lisp's: `(< 1 2 3)` asks whether the whole chain ascends,
-//! not whether the first two do. One shape, written once and used by all of
-//! them.
+//! Variadic numeric comparisons.
 use super::*;
 
 const COMPARE_DOC: &str = "(= NUMBER &rest NUMBERS): Return t if all arguments are \
@@ -103,11 +99,7 @@ const MIN_DOC: &str = "(min NUMBER &rest NUMBERS): Return the smallest of the \
 
 fold_numbers!(primitive_min, min);
 
-/// Register this module's primitives: ordering numbers.
-///
-/// Called by [`super::setup_base_env`]. Here rather than there because a
-/// primitive's name, its implementation and its docstring are one fact in three
-/// pieces, and they were a thousand lines apart.
+/// Register this module's primitives and Lisp docstrings.
 pub(super) fn install<T: LispContext>(into: &Registry<T>) {
     into.function("=", primitive_compare, COMPARE_DOC);
     into.function("<", primitive_lt, LT_DOC);

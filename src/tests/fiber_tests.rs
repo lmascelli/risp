@@ -4,7 +4,6 @@ mod tests {
     use crate::{Env, EvalError, LispContext, LispExp, Parser, eval};
     use std::sync::Arc;
 
-    // Helper to evaluate multiple expressions easily by wrapping them in a progn
     fn eval_script<T: LispContext>(
         script: &str,
         env: Arc<Env<T>>,
@@ -19,7 +18,6 @@ mod tests {
     fn setup_fiber_env() -> (Arc<Env<()>>, ()) {
         let env = Env::new_root();
 
-        // This loads `resume`, `atom`, `deref`, `reset`, and `funcall`
         setup_base_env(env.clone());
 
         (env, ())
@@ -29,13 +27,7 @@ mod tests {
     fn test_fiber_basic_yielding() {
         let (env, mut ctx) = setup_fiber_env();
 
-        // Three steps, with a `yield` between them saying so.
-        //
-        // The yields used to be implicit: a fiber's body ran one top-level
-        // form per `resume`. That was a second way of suspending, invisible
-        // in the source, and it stopped being worth its confusion the moment
-        // `yield` existed -- a body of three forms suspended twice with no
-        // yield anywhere in sight.
+        // Explicit yields separate the three execution steps.
         let script = r#"
             (setq my-task (fiber
                 (yield 10.0)
@@ -44,7 +36,6 @@ mod tests {
         "#;
         eval_script(script, env.clone(), &mut ctx).unwrap();
 
-        // Crank the fiber forward one step at a time
         let step1 = eval_script("(resume my-task)", env.clone(), &mut ctx).unwrap();
         assert_eq!(step1, LispExp::Number(10.0));
 
@@ -54,7 +45,6 @@ mod tests {
         let step3 = eval_script("(resume my-task)", env.clone(), &mut ctx).unwrap();
         assert_eq!(step3, LispExp::Number(30.0));
 
-        // Fiber is exhausted, should safely return nil on all future calls
         let exhausted1 = eval_script("(resume my-task)", env.clone(), &mut ctx).unwrap();
         assert_eq!(exhausted1, LispExp::symbol("nil".into()));
 
@@ -66,8 +56,7 @@ mod tests {
     fn test_fiber_internal_state_preservation() {
         let (env, mut ctx) = setup_fiber_env();
 
-        // The fiber uses a `let` block, but because `fiber` captures its environment
-        // exactly like a lambda, the `counter` variable should persist across yields!
+        // The continuation must retain the `let` binding across yields.
         let script = r#"
             (setq counter-task
                 (let ((counter 0))
@@ -77,8 +66,6 @@ mod tests {
                         (setq counter (+ counter 100)))))
         "#;
 
-        // Note: You need a native `+` function to make this test work if you haven't
-        // added one to your base_env. Let's mock it just for this test:
         env.set_function(
             "+".into(),
             LispExp::primitive(
@@ -111,14 +98,12 @@ mod tests {
     fn test_multiple_interleaved_fibers() {
         let (env, mut ctx) = setup_fiber_env();
 
-        // Create two completely independent fibers
         let script = r#"
             (setq task-a (fiber (yield "A1") "A2"))
             (setq task-b (fiber (yield "B1") "B2"))
         "#;
         eval_script(script, env.clone(), &mut ctx).unwrap();
 
-        // We should be able to alternate calling them without crossing the streams
         let a1 = eval_script("(resume task-a)", env.clone(), &mut ctx).unwrap();
         assert_eq!(a1, LispExp::string("A1".into()));
 
@@ -136,7 +121,7 @@ mod tests {
     fn test_fiber_empty_instantiation() {
         let (env, mut ctx) = setup_fiber_env();
 
-        // (fiber) with no arguments should immediately yield nil
+        // An empty fiber is already complete.
         eval_script("(setq empty-task (fiber))", env.clone(), &mut ctx).unwrap();
 
         let res = eval_script("(resume empty-task)", env.clone(), &mut ctx).unwrap();

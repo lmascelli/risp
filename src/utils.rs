@@ -1,22 +1,13 @@
-//!
-//! Description of the utility functions
-//!
+//! Argument binding, syntax conversion, and condition handling helpers.
 
 use super::{Env, EvalError, Lambda, LispContext, LispExp};
 use std::sync::Arc;
 
-/// Fail unless there are exactly COUNT arguments.
+/// Require exactly `count` arguments.
 ///
-/// The six lines this replaces appeared forty-five times in `lisp/base/`
-/// alone and a further fifty-eight across the editor's primitives, which is a
-/// hundred-odd chances to write `expected: 2` above a body that reads
-/// `args[2]`. The check is the same check everywhere; only the number differs,
-/// and that is the argument.
+/// # Errors
 ///
-/// Only for the primitives whose arity is *exact*. One with optional arguments
-/// has a range, not a count, and says so itself -- there is no `at_most` here
-/// because the ones that would use it each want a different message about which
-/// argument was the surplus.
+/// Returns [`EvalError::WrongNumberOfArguments`] on a mismatch.
 pub fn exact_arity<T: LispContext>(args: &[LispExp<T>], count: usize) -> Result<(), EvalError<T>> {
     if args.len() != count {
         return Err(EvalError::WrongNumberOfArguments {
@@ -27,12 +18,11 @@ pub fn exact_arity<T: LispContext>(args: &[LispExp<T>], count: usize) -> Result<
     Ok(())
 }
 
-/// Fail when there are no arguments at all.
+/// Require at least one argument.
 ///
-/// The variadic primitives -- `+`, `max`, `concat`, the comparisons -- accept
-/// any number from one upwards, so an arity check is only ever a check that
-/// there is *something*, and all twenty of them spelled it `expected: 1, got:
-/// 0` by hand.
+/// # Errors
+///
+/// Returns [`EvalError::WrongNumberOfArguments`] with `expected: 1` when empty.
 pub fn some_arguments<T: LispContext>(args: &[LispExp<T>]) -> Result<(), EvalError<T>> {
     if args.is_empty() {
         return Err(EvalError::WrongNumberOfArguments {
@@ -43,9 +33,8 @@ pub fn some_arguments<T: LispContext>(args: &[LispExp<T>]) -> Result<(), EvalErr
     Ok(())
 }
 
-/// The inverse: reconstitute a form `eval` can dispatch on from a data
-/// list. Only reached when data is evaluated — `(eval (list '+ 1 2))`,
-/// and macro expansions.
+/// Convert list data into executable forms, preserving quoted payloads.
+/// Reject improper code lists; recurse into vector contents.
 pub(super) fn data_to_form<T: LispContext>(exp: &LispExp<T>) -> Result<LispExp<T>, EvalError<T>> {
     match exp {
         LispExp::Cons(_) => {
@@ -53,12 +42,7 @@ pub(super) fn data_to_form<T: LispContext>(exp: &LispExp<T>) -> Result<LispExp<T
             if !tail.is_nil() {
                 return Err(EvalError::UnvalidFunctionCall);
             }
-            // `(quote X)` is the one form whose argument must stay data.
-            // The reader leaves it that way (it runs `form_to_data` over
-            // the literal at read time), and a macro that builds a quote
-            // form by hand -- `(cons 'quote (cons items nil))` -- has to
-            // behave identically. Recursing here would turn X into syntax
-            // and `quote` would then hand a syntax node back as a value.
+            // Keep the argument of `quote` as data, matching the reader's representation.
             if items.len() == 2 {
                 if matches!(&items[0], LispExp::Symbol(s) if s.as_str() == "quote") {
                     return Ok(LispExp::form(vec![items[0].clone(), items[1].clone()]));
@@ -81,12 +65,10 @@ pub(super) fn data_to_form<T: LispContext>(exp: &LispExp<T>) -> Result<LispExp<T
     }
 }
 
-/// Binds ARGS into CALL_FRAME according to LAMBDA's parameter list:
-/// required params first (one-to-one), then `&optional` params
-/// (defaulting to `nil` once ARGS runs out), then -- if LAMBDA has an
-/// `&rest` param -- every remaining argument collected into a single
-/// list. Shared by every lambda/macro call site so the required/
-/// optional/rest binding rules only need to be implemented once.
+/// Bind required, optional, and rest arguments in the call frame.
+///
+/// Omitted optionals become `nil`; excess arguments form the rest list.
+/// Returns an arity error when the parameter list cannot accept the arguments.
 pub fn bind_lambda_args<T: LispContext>(
     lambda: &Lambda<T>,
     args: &[LispExp<T>],
@@ -112,26 +94,19 @@ pub fn bind_lambda_args<T: LispContext>(
         idx += 1;
     }
     if let Some(rest_name) = &lambda.rest {
-        // `idx` can run past `args.len()` here -- e.g. `params.len() == 1`,
-        // `optionals.len() == 1`, but only the one required argument was
-        // supplied -- so it must be clamped before slicing.
+        // Missing optional arguments can advance `idx` beyond `args.len()`;
+        // clamp it before slicing the rest arguments.
         let rest_start = idx.min(args.len());
         call_frame.set_variable(
             rest_name.clone(),
-            // The `&rest` container is data even for a macro, where the
-            // elements it holds are unevaluated syntax -- the body walks it
-            // with `car`/`cdr` either way.
+            // Even for macros, the rest-argument container is data whose elements may be syntax.
             LispExp::proper_list(args[rest_start..].to_vec()),
         );
     }
     Ok(())
 }
 
-/// Parses a `defun`/`lambda`/`defmacro` parameter list into its three
-/// buckets, mirroring Emacs Lisp's own grammar: `(REQUIRED...  [&optional
-/// OPTIONAL...] [&rest REST])`. `&optional` and `&rest` are markers, not
-/// bindable names -- they select which bucket the symbols that follow
-/// land in, and are consumed rather than returned.
+/// Parse required, optional, and rest parameter names, validating marker order.
 pub(super) fn parse_lambda_params<T: LispContext>(
     params_list: &[LispExp<T>],
 ) -> Result<(Vec<String>, Vec<String>, Option<String>), EvalError<T>> {
@@ -177,7 +152,6 @@ pub(super) fn parse_lambda_params<T: LispContext>(
         }
     }
 
-    // `&rest` with nothing after it.
     if mode == Mode::Rest {
         return Err(EvalError::DefunRestMustHaveExactlyOneParam);
     }
@@ -185,11 +159,8 @@ pub(super) fn parse_lambda_params<T: LispContext>(
     Ok((required, optionals, rest))
 }
 
-// The condition symbol a `condition-case` handler matches against.
-///
-/// Every malformed-special-form variant collapses to `error`: none of them is
-/// worth naming individually from Lisp, and they all mean the same thing --
-/// the form was written wrongly.
+/// Map an evaluation failure to its Lisp condition symbol.
+/// Malformed special forms use the generic `error` condition.
 pub(super) fn error_symbol<T: LispContext>(err: &EvalError<T>) -> LispExp<T> {
     let name = match err {
         EvalError::Signal { symbol, .. } => return symbol.clone(),
@@ -207,10 +178,7 @@ pub(super) fn error_symbol<T: LispContext>(err: &EvalError<T>) -> LispExp<T> {
     LispExp::symbol(name.into())
 }
 
-/// The data a `condition-case` binds alongside the condition symbol.
-///
-/// Carrying the offending *value* rather than a rendering of it is what the
-/// generic error type buys: a handler can look at what actually went wrong.
+/// Return condition data containing the offending values for Lisp handlers.
 pub(super) fn error_data<T: LispContext>(err: &EvalError<T>) -> LispExp<T> {
     match err {
         EvalError::Signal { data, .. } => data.clone(),
@@ -229,8 +197,7 @@ pub(super) fn error_data<T: LispContext>(err: &EvalError<T>) -> LispExp<T> {
     }
 }
 
-/// Does a handler's condition cover `symbol`? `t` and `error` cover
-/// everything; a list covers whatever any of its elements covers.
+/// Match a condition symbol or syntax list; `t` and `error` match all conditions.
 pub(super) fn condition_matches<T: LispContext>(
     condition: &LispExp<T>,
     symbol: &LispExp<T>,

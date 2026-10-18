@@ -1,23 +1,21 @@
-///
-/// Add a general description of the context here
-///
-// ========================================================================== //
-//                 +------------------------------------------+
-//                 |  Context that can embed the interpreter  |
-//                 +------------------------------------------+
-// ========================================================================== //
+//! Hooks for embedding the interpreter in a host application.
 use super::{EvalError, Location, SourceMap};
 use std::sync::Arc;
 
+/// Host services used during evaluation.
+///
+/// All hooks have defaults: no fuel limit, diagnostics, or backtrace recording.
+/// Clones should share any host state that spawned evaluations need to access.
 pub trait LispContext: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static {
-    /// Consumes a given amount of execution ticks.
-    /// Returns `Err(EvalError::OutOfFuel)` if the host-defined budget is exhausted.
+    /// Charge `amount` execution units against the host's budget.
+    ///
+    /// Return [`EvalError::OutOfFuel`] when the charge cannot be paid.
+    /// The default accepts every charge without metering.
     fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError<Self>> {
         Ok(())
     }
 
-    /// Allows the VM to bubble up non-fatal diagnostic logs, trace statements,
-    /// or debugging notices to the host without knowing how the host presents them.
+    /// Receive a diagnostic message from the interpreter. The default discards it.
     fn log_diagnostic(&self, _msg: &str) {}
 
     /// Run the cleanup forms of `unwind-protect`.
@@ -29,115 +27,58 @@ pub trait LispContext: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'stat
         cleanup()
     }
     
-    /// Called by the evaluator when it begins evaluating on a **newly created
-    /// thread** -- currently only the `(spawn ...)` special form.
+    /// Initialize host state on a newly spawned evaluation thread.
     ///
-    /// A host that meters execution needs this because metering state is
-    /// naturally *per-thread*: a budget belongs to one line of execution, and
-    /// nothing about a parent thread's remaining allowance is meaningful to a
-    /// child that runs concurrently with it. Since the evaluator is the only
-    /// thing that knows a thread was just created, only the evaluator can tell
-    /// the host to arm it.
-    ///
-    /// Unlike the scope-based entry points a host drives itself, this takes no
-    /// guard and needs no matching "end" call: a fresh thread has no enclosing
-    /// scope to nest inside or unwind back to, and its state dies with it.
-    ///
-    /// Default: a no-op, so hosts that do not meter pay nothing.
+    /// Override this to arm thread-local fuel using [`crate::FuelMeter::arm_thread`].
+    /// No matching end call is made. The default does nothing.
     fn begin_thread_evaluation(&self) {}
 
-    /// Called by the evaluator right before running the body of a function
-    /// call -- a named function, a primitive, or an inline lambda
-    /// application -- with a short description of the frame (typically the
-    /// function's name, or "<lambda>" for an anonymous one). A host that
-    /// wants a call stack for backtraces overrides this (and
-    /// `pop_call_frame`); the default is a no-op, so hosts that don't care
-    /// pay nothing.
+    /// Record a direct evaluator call, labeled with its name or `<lambda>`.
     ///
-    /// The intended protocol: pop the frame when the call *succeeds*, but
-    /// leave it in place when it fails, so that by the time an error has
-    /// finished propagating out to whoever is watching for it, the frames
-    /// still standing are exactly the chain of calls that were active at
-    /// the moment things went wrong -- a backtrace frozen at throw time,
-    /// not inspected after the stack has already unwound. `eval` follows
-    /// this protocol at every call site; a host only needs to store and
-    /// clear the frames.
+    /// Successful and suspended calls pop their frame; failed calls leave it for
+    /// a backtrace. Hosts implementing this hook should also implement the other
+    /// frame hooks and clear retained frames after reporting an uncaught error.
     ///
-    /// One caveat worth knowing: this reflects genuine call nesting, not
-    /// full Lisp call semantics. A call in tail position is evaluated by
-    /// the trampoline in `eval` *after* its caller's frame has already
-    /// been popped -- that's the whole point of tail-call elimination, the
-    /// caller's frame is gone, not still waiting -- so a chain of tail
-    /// calls won't show up as a chain of frames, only the innermost one
-    /// still "on the stack" will. Every non-tail call (argument
-    /// evaluation, all but the last form in a body, and any nested
-    /// `eval`/`funcall` performed by a primitive) is captured correctly.
+    /// Tail calls replace their caller, so the stack records active Rust call
+    /// nesting rather than the complete Lisp call history. The default does nothing.
     fn push_call_frame(&self, _frame: &str) {}
 
-    /// Pop the most recently pushed frame, undoing one `push_call_frame`.
+    /// Remove the most recent call frame. The default does nothing.
     fn pop_call_frame(&self) {}
 
-    /// How many frames are currently pushed. Combined with
-    /// `truncate_call_frames`, this lets a primitive that *catches* an
-    /// error -- swallowing it into a returned value instead of letting it
-    /// propagate, e.g. `eval-string-safe` -- restore the frame stack to
-    /// how it was before its own (now-discarded) nested evaluation. That
-    /// nested evaluation may have pushed frames that never got to pop
-    /// (their call failed, per the `push_call_frame` protocol); without
-    /// this they'd leak into whatever *actually* uncaught error is
-    /// reported next, showing an unrelated, already-handled failure in a
-    /// fresh backtrace.
+    /// Return the current frame depth, including any error-origin entry.
+    ///
+    /// Code that handles an evaluation error uses this with
+    /// [`Self::truncate_call_frames`] to discard the handled failure's frames.
+    /// The default returns zero.
     fn call_frame_depth(&self) -> usize {
         0
     }
 
-    /// Pop frames until exactly `depth` remain (a no-op if already at or
-    /// below `depth`).
+    /// Discard entries above `depth`; leave a shallower stack unchanged.
+    /// The default does nothing.
     fn truncate_call_frames(&self, _depth: usize) {}
 
-    // ------------------------------------------------------------------
-    // Debug mode: where an error happened
-    // ------------------------------------------------------------------
-
-    /// The table of where forms were read, when the host is in debug mode;
-    /// `None`, the default, in the nominal mode.
+    /// Return the source map used for error locations, or `None` to disable them.
     ///
-    /// The evaluator asks for it only on the way out of a failed evaluation,
-    /// never while evaluation succeeds, so a host in the nominal mode pays
-    /// nothing for debug mode existing -- and a host that never has one pays
-    /// nothing at all, since this default inlines to `None`.
+    /// Use the same map when constructing [`crate::Parser::with_source_map`].
+    /// The evaluator consults it only after an evaluation fails.
     fn source_map(&self) -> Option<Arc<SourceMap>> {
         None
     }
 
-    /// Debug mode: an error is leaving the form read at AT.
+    /// Record an error location, reported innermost first for located forms.
     ///
-    /// Called by every evaluation the error passes through, innermost first,
-    /// for each form that has a location. The first describes where the error
-    /// happened; the ones after it are the forms enclosing that one.
-    ///
-    /// The intended protocol: keep the location as an *entry of its own on
-    /// the call stack*, pushed on top of the frames the failure has left
-    /// standing, counted by `call_frame_depth` and removed by
-    /// `truncate_call_frames` like any frame; and ignore this call while such
-    /// an entry is already the innermost one, which is how the later, outer,
-    /// forms are told apart from the first.
-    ///
-    /// Being on the stack rather than beside it is what lets it go exactly
-    /// when the error is handled. A `condition-case` truncates to the depth it
-    /// saw *before* its body ran, which removes the entry; an `unwind-protect`
-    /// truncates to the depth it saw *after* its body failed, which keeps it
-    /// for the error the protect goes on to propagate. A field beside the
-    /// stack could not be cleared by one and kept by the other: when the body
-    /// pushed no frames, both truncate to the same depth.
+    /// Keep the first origin as a separate stack entry, counted by
+    /// [`Self::call_frame_depth`] and removed by [`Self::truncate_call_frames`].
+    /// Ignore enclosing origins while that entry is innermost. This lets
+    /// `condition-case` remove handled origins while `unwind-protect` preserves
+    /// the original failure during cleanup. The default does nothing.
     fn note_error_origin(&self, _at: &Location) {}
 
-    /// Debug mode: a call that failed was made by the form read at AT.
+    /// Reserved hook for attaching a failed call's location to a backtrace frame.
     ///
-    /// Called once for each call whose frame the failure leaves standing,
-    /// innermost first. The host gives AT to the innermost frame that has no
-    /// call site yet -- which is always the frame of this call, since the
-    /// calls inside it failed, and were noted, before it did -- skipping the
-    /// entry `note_error_origin` keeps.
+    /// The current evaluator does not invoke this hook. Error origins are
+    /// reported through [`Self::note_error_origin`]. The default does nothing.
     fn note_call_site(&self, _at: &Location) {}
 }

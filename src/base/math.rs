@@ -1,8 +1,4 @@
-//! Arithmetic.
-//!
-//! Everything here is `f64`, which is the one decision this Lisp makes about
-//! numbers. Integer division is spelled by `floor`, and `%` and `mod` are the
-//! same primitive under two names.
+//! Arithmetic on `f64` values. `%` and `mod` name the same primitive.
 use super::*;
 
 const SUM_DOC: &str = "(+ &rest NUMBERS): Return the sum of NUMBERS. With no arguments, \
@@ -174,10 +170,6 @@ fn primitive_1minus<T: LispContext>(
     Ok(LispExp::number(expect_number(&args[0])? - 1.0))
 }
 
-// `abs' was filed under `Comparisons' and `floor' under `Strings' in the file
-// this came from -- both of them one line long, both of them arithmetic, and
-// neither of them findable by looking where they belong. A directory makes that
-// kind of drift visible, which is most of the point of being one.
 const ABS_DOC: &str = "(abs NUMBER): Return the absolute value of NUMBER.\n\n\
                  Example:\n\
                  (abs -5) => 5\n\
@@ -194,27 +186,15 @@ const FLOOR_DOC: &str = "(floor NUMBER): Return the largest integer not greater 
 
 number_op!(primitive_floor, floor);
 
-/// Register this module's primitives: arithmetic.
-///
-/// Called by [`super::setup_base_env`]. Here rather than there because a
-/// primitive's name, its implementation and its docstring are one fact in three
-/// pieces, and they were a thousand lines apart.
+/// Register this module's primitives and Lisp docstrings.
 pub(super) fn install<T: LispContext>(into: &Registry<T>) {
     into.function("abs", primitive_abs, ABS_DOC);
     into.function("floor", primitive_floor, FLOOR_DOC);
-    // Base math
-    // `+`, `-` and `mod`/`%` are deliberately left undocumented: `(+)` should
-    // return 0 but currently errors, `(- 5)` should negate to -5 but returns
-    // 5 unchanged, and `mod` doesn't follow Elisp's "result takes the sign of
-    // the divisor" rule for a negative divisor. Documenting them now would
-    // just describe the bugs as if they were the intended behavior.
     into.function("+", primitive_sum, SUM_DOC);
     into.function("-", primitive_subtraction, SUBTRACTION_DOC);
     into.function("*", primitive_mul, MUL_DOC);
     into.function("/", primitive_div, DIV_DOC);
     into.function("mod", primitive_mod, MOD_DOC);
-    // Its own docstring, naming `%': a reader asking about `%' is shown
-    // the call they typed rather than the other spelling of it.
     into.function("%", primitive_mod, PERCENT_DOC);
     into.function("1+", primitive_1plus, N_1PLUS_DOC);
     into.function("1-", primitive_1minus, N_1MINUS_DOC);

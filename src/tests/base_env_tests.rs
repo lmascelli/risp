@@ -1,12 +1,4 @@
-//! Edge-case tests for the *real* standard library in `base_env.rs`.
-//!
-//! `lisp_core_compliance_tests.rs` deliberately avoids `setup_base_env` so
-//! it stays a pure check of `lisp.rs` itself; that means none of the ~60
-//! primitives registered by `setup_base_env` (list ops, arithmetic,
-//! strings, predicates, ...) had any dedicated tests anywhere. This file
-//! fills that gap, focused on boundary conditions and the handful of
-//! primitives (`eq`/`eql`, `listp`, `functionp`, `atom`/`make-atom`, `+`,
-//! `-`, `mod`) that were fixed to match real Emacs Lisp semantics.
+//! Boundary tests for the standard primitives installed by `setup_base_env`.
 #[cfg(test)]
 mod tests {
     use crate::{Env, EvalError, LispExp, Parser, eval, setup_base_env};
@@ -35,9 +27,7 @@ mod tests {
         eval_str(source, env_with_primitives()).expect_err(&format!("expected `{source}` to fail"))
     }
 
-    // ===========================================================
     // Lists: dotted pairs, append, out-of-range access
-    // ===========================================================
 
     #[test]
     fn car_and_cdr_work_on_a_dotted_pair() {
@@ -87,9 +77,7 @@ mod tests {
         assert_eq!(eval_ok("(nthcdr 99 '(1 2 3))"), LispExp::nil());
     }
 
-    // ===========================================================
     // Arithmetic: division by zero, unary quirks, chaining, mod sign
-    // ===========================================================
 
     #[test]
     fn division_with_a_single_argument_returns_the_reciprocal() {
@@ -138,9 +126,7 @@ mod tests {
         assert_eq!(eval_ok("(= 1 1 2)"), LispExp::nil());
     }
 
-    // ===========================================================
     // Strings: negative substring indices, format directives
-    // ===========================================================
 
     #[test]
     fn substring_negative_indices_count_from_the_end() {
@@ -218,16 +204,11 @@ mod tests {
         );
     }
 
-    // ===========================================================
     // Calling conventions: funcall vs. apply/mapcar symbol resolution
-    // ===========================================================
 
     #[test]
     fn funcall_apply_and_mapcar_all_resolve_a_symbol_argument() {
-        // `funcall`, `apply`, and `mapcar` all go through the shared
-        // `call_callable` helper, so a quoted symbol naming a function
-        // works the same way in all three -- matching real Elisp, where
-        // `funcall` accepts a symbol too.
+        // All three entry points must resolve function symbols consistently.
         assert_eq!(eval_ok("(funcall 'car '(1 2))"), LispExp::number(1.0));
         assert_eq!(eval_ok("(apply 'car '((1 2)))"), LispExp::number(1.0));
         assert_eq!(
@@ -244,10 +225,8 @@ mod tests {
         ));
     }
 
-    // ===========================================================
     // Predicates: eq/eql identity vs. equal structural comparison,
     // listp/functionp resolving nil and function-bound symbols
-    // ===========================================================
 
     #[test]
     fn eq_is_identity_based_while_equal_is_structural() {
@@ -259,8 +238,7 @@ mod tests {
 
     #[test]
     fn eq_treats_numbers_and_symbols_as_immediate_values() {
-        // Numbers and symbols have no separate "identity" in this VM, so
-        // `eq` compares them the same way `eql`/`equal` would.
+        // Numbers and symbols compare by value under all three equality predicates.
         assert_eq!(eval_ok("(eq 1 1)"), LispExp::t());
         assert_eq!(eval_ok("(eq 'foo 'foo)"), LispExp::t());
         assert_eq!(eval_ok("(eq 1 2)"), LispExp::nil());
@@ -268,8 +246,7 @@ mod tests {
 
     #[test]
     fn eq_on_a_list_bound_to_two_variables_is_the_same_allocation() {
-        // `x` and `y` both point at the one list `setq` built, so this is
-        // the case real Elisp's `eq` is actually meant to catch.
+        // Both variables share the same list allocation.
         let script = "(setq x (list 1 2)) (setq y x) (eq x y)";
         assert_eq!(eval_ok(script), LispExp::t());
     }
@@ -298,10 +275,7 @@ mod tests {
         assert_eq!(eval_ok("(stringp 1)"), LispExp::nil());
     }
 
-    // ===========================================================
-    // atom / make-atom: the real Elisp predicate vs. the rsedit
-    // concurrency ref-cell constructor it used to share a name with
-    // ===========================================================
+    // `atom` tests for a non-cons value; `make-atom` creates a mutable container.
 
     #[test]
     fn atom_is_the_real_elisp_non_cons_predicate() {
@@ -316,11 +290,7 @@ mod tests {
         assert_eq!(eval_ok(script), LispExp::number(2.0));
     }
 
-    // ===========================================================
-    // &optional / &rest through funcall/apply -- `call_callable` in
-    // base_env.rs is a separate lambda-invocation path from the ones in
-    // lisp.rs, so it needs its own check that it shares the same binder.
-    // ===========================================================
+    // Exercise the shared binder through `call_callable`, separately from direct calls.
 
     #[test]
     fn funcall_and_apply_respect_optional_and_rest_params() {
@@ -340,14 +310,9 @@ mod tests {
         );
     }
 
-    // ===========================================================
     // Printing
-    // ===========================================================
 
-    /// `LispExp`'s `Debug` is the printer: it renders Lisp source rather
-    /// than a Rust value dump, because these strings land in the echo area
-    /// and in `*Messages*`. Cons chains especially -- a derived `Debug`
-    /// nests one `ConsCell { .. }` per element and is unreadable.
+    /// Print readable Lisp data and opaque markers for runtime-only values.
     #[test]
     fn values_print_as_lisp_source() {
         let cases = [
@@ -363,8 +328,7 @@ mod tests {
             ("'(a (b c) [1 2] \"hi\")", "(a (b c) [1 2] \"hi\")"),
             ("'(nested (deep (deeper 1)))", "(nested (deep (deeper 1)))"),
             ("'(quote x)", "(quote x)"),
-            // Numbers are `f64` internally, but an integral one prints
-            // without a fractional part -- `(+ 1 2)` should echo as `3`.
+            // Integral numbers print without a fractional part.
             ("(+ 1 2)", "3"),
             ("(list 1.5 2.0 -3)", "(1.5 2 -3)"),
             // Values the reader cannot produce print in `#<...>` form.

@@ -99,7 +99,6 @@ pub(crate) struct Report {
 
 impl Report {
     pub fn new(kind: Kind, file_name: &str, title: &'static str, preamble: String) -> Self {
-        // rsedit's manifest is in `core/`; risp's manifest is at the crate root.
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
         let root = if env!("CARGO_PKG_NAME") == "rsedit_core" {
             manifest.parent().unwrap_or(manifest)

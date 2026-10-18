@@ -1,9 +1,4 @@
-//! The reader's behaviour on input that is broken, deep or unusual.
-//!
-//! Each section is one entry of the problem report (`doc/rapporto-problemi.typ`,
-//! LET-1 to LET-6). The broken inputs come from that report and from the
-//! reader fuzzer that found most of them; every one of them used to hang,
-//! panic, overflow the stack or read as something it is not.
+//! Reader regressions for malformed, deeply nested, and unusual input.
 #[cfg(test)]
 mod tests {
     use crate::parser::{MAX_READ_DEPTH, ParserError};
@@ -28,8 +23,7 @@ mod tests {
         LispExp::symbol(name.into())
     }
 
-    /// Run BODY on its own thread and fail, rather than hang the whole test
-    /// run, if it has not finished within a few seconds.
+    /// Run the reader on a separate thread with a timeout to detect hangs.
     fn within_seconds(body: impl FnOnce() + Send + 'static) {
         let (done, finished) = mpsc::channel();
         std::thread::spawn(move || {
@@ -41,9 +35,7 @@ mod tests {
             .expect("the reader did not finish");
     }
 
-    // =====================================================================
-    // LET-1: input ending inside a token
-    // =====================================================================
+    // Input ending inside a token.
 
     #[test]
     fn input_ending_inside_a_symbol_in_a_list_is_an_unclosed_list() {
@@ -68,8 +60,7 @@ mod tests {
         }
     }
 
-    /// The test that would have found LET-1: every prefix of a valid program
-    /// is read to a value or an error, and never forever.
+    /// Every prefix of a valid program must terminate with a value or an error.
     #[test]
     fn every_prefix_of_a_program_is_read_to_an_end() {
         within_seconds(|| {
@@ -103,9 +94,7 @@ mod tests {
         });
     }
 
-    // =====================================================================
-    // LET-2: tokens that cannot begin an expression
-    // =====================================================================
+    // Tokens that cannot begin an expression.
 
     #[test]
     fn a_misplaced_dot_is_an_error_not_a_panic() {
@@ -124,9 +113,7 @@ mod tests {
         assert_eq!(read("{:k ,@}"), unexpected("}"));
     }
 
-    // =====================================================================
-    // LET-3: nesting
-    // =====================================================================
+    // Nesting limits.
 
     fn nested(depth: usize) -> String {
         format!("{}{}", "(".repeat(depth), ")".repeat(depth))
@@ -142,7 +129,7 @@ mod tests {
     #[test]
     fn nesting_past_the_limit_is_an_error_not_a_stack_overflow() {
         assert_eq!(read(&nested(MAX_READ_DEPTH + 1)), Err(ParserError::TooDeep));
-        // Far past it, where the recursion used to abort the process.
+        // Exercise input far beyond the supported nesting depth.
         assert_eq!(read(&nested(100_000)), Err(ParserError::TooDeep));
         assert_eq!(read(&"[".repeat(100_000)), Err(ParserError::TooDeep));
         assert_eq!(read(&"'".repeat(100_000)), Err(ParserError::TooDeep));
@@ -161,9 +148,7 @@ mod tests {
         assert!(parser.next::<()>().is_err());
     }
 
-    // =====================================================================
-    // LET-4: numbers
-    // =====================================================================
+    // Numeric token boundaries.
 
     #[test]
     fn numbers_are_read_in_every_usual_spelling() {
@@ -201,9 +186,7 @@ mod tests {
         }
     }
 
-    // =====================================================================
-    // LET-5: what ends a symbol
-    // =====================================================================
+    // Symbol delimiters.
 
     #[test]
     fn a_carriage_return_ends_a_symbol() {
@@ -248,9 +231,7 @@ mod tests {
         assert_eq!(read("?a"), Ok(sym("?a")));
     }
 
-    // =====================================================================
-    // LET-6: no state survives an error
-    // =====================================================================
+    // Parser behavior after malformed input.
 
     #[test]
     fn reading_carries_on_cleanly_after_a_bad_number() {
@@ -264,8 +245,7 @@ mod tests {
 
     #[test]
     fn a_closing_delimiter_alone_is_an_error() {
-        // The input that reached the `todo!()` the old lexer kept for a
-        // pending token it could not name.
+        // Check the pending-token path at end of input.
         assert_eq!(read(")"), Err(ParserError::UnbalancedRParen));
         assert_eq!(read("]"), Err(ParserError::UnbalancedRSquared));
         assert_eq!(read("}"), Err(ParserError::UnbalancedRBracket));

@@ -55,13 +55,8 @@ fn primitive_get<T: LispContext>(
     Ok(env.get_property(&symbol, &key).unwrap_or_else(LispExp::nil))
 }
 
-/// Register this module's primitives: symbols, and what they carry besides a value.
-///
-/// Called by [`super::setup_base_env`]. Here rather than there because a
-/// primitive's name, its implementation and its docstring are one fact in three
-/// pieces, and they were a thousand lines apart.
+/// Register this module's primitives and Lisp docstrings.
 pub(super) fn install<T: LispContext>(into: &Registry<T>) {
-    // Symbol plist
     into.function("put", primitive_put, PUT_DOC);
     into.function("get", primitive_get, GET_DOC);
 }

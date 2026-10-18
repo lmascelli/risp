@@ -1,8 +1,4 @@
-//! The one mutable thing that crosses a thread.
-//!
-//! An atom is a box several threads may read and write. Everything else a
-//! thread touches is its own, which is the whole of this interpreter's
-//! concurrency story -- and the reason that story fits in three primitives.
+//! Thread-safe mutable atoms.
 use super::*;
 
 const MAKE_ATOM_DOC: &str = "(make-atom VALUE): Return a new atom holding VALUE -- a box \
@@ -98,13 +94,8 @@ fn primitive_reset<T: LispContext>(
     }
 }
 
-/// Register this module's primitives: the one mutable thing that crosses a thread.
-///
-/// Called by [`super::setup_base_env`]. Here rather than there because a
-/// primitive's name, its implementation and its docstring are one fact in three
-/// pieces, and they were a thousand lines apart.
+/// Register this module's primitives and Lisp docstrings.
 pub(super) fn install<T: LispContext>(into: &Registry<T>) {
-    // Multithreading
     into.function("make-atom", primitive_make_atom, MAKE_ATOM_DOC);
     into.function("deref", primitive_deref, DEREF_DOC);
     into.function("reset", primitive_reset, RESET_DOC);

@@ -21,7 +21,6 @@ mod tests {
         eval_str(source).unwrap_or_else(|e| panic!("eval of `{source}` failed: {e:?}"))
     }
 
-    // ------------------------------ catch / throw -------------------------
 
     #[test]
     fn a_catch_without_a_throw_returns_its_last_body_form() {
@@ -106,7 +105,6 @@ mod tests {
         );
     }
 
-    // ----------------------------- condition-case -------------------------
 
     #[test]
     fn condition_case_returns_the_body_value_when_nothing_fails() {
@@ -156,13 +154,10 @@ mod tests {
         );
     }
 
-    // ------------- the point of the generic error type --------------------
 
     #[test]
     fn a_handler_receives_the_offending_value_itself_not_a_rendering_of_it() {
-        // `(car 5)` fails with wrong-type-argument. The handler gets the 5 as
-        // a number it can compute with -- before the error type was generic
-        // this was a `format!("{:?}")` string and the value was lost.
+        // Handlers receive the offending number as data, so they can compute with it.
         assert_eq!(
             eval_ok("(condition-case e (car 5) (wrong-type-argument (nth 1 (cdr e))))"),
             LispExp::number(5.0)
@@ -191,12 +186,10 @@ mod tests {
             eval_ok("(condition-case e (signal 'my-error '(1 2)) (my-error (cdr e)))"),
             LispExp::proper_list(vec![LispExp::number(1.0), LispExp::number(2.0)])
         );
-        // `error` still covers a user-defined condition.
         assert_eq!(
             eval_ok("(condition-case nil (signal 'my-error nil) (error 'caught))"),
             LispExp::symbol("caught".into())
         );
-        // A handler for a different condition does not.
         assert!(matches!(
             eval_str("(condition-case nil (signal 'my-error nil) (other-error 'wrong))")
                 .expect_err("the handler should not have matched"),
@@ -204,7 +197,6 @@ mod tests {
         ));
     }
 
-    // ------------------------- where the two interact ---------------------
 
     #[test]
     fn a_condition_case_does_not_intercept_a_throw() {

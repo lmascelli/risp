@@ -1,6 +1,4 @@
-//!
-//!  Add a general description of the environment here
-//!
+//! Lexical environments with separate variable, function, and macro namespaces.
 
 use super::{LispContext, LispExp};
 use std::{
@@ -8,25 +6,13 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-// -------------------------------  Environment --------------------------------
-/// Properties, by symbol name and then by key.
+/// Properties indexed by symbol name, then property key.
 type PropertyTable<T> = RwLock<HashMap<String, HashMap<String, LispExp<T>>>>;
 
-/// The property a variable's docstring is kept under.
-///
-/// A docstring needs no storage of its own: it is a fact about a symbol, and
-/// the property table is already exactly that -- global, unscoped, and owned
-/// by the root. Emacs' name for the same property, so `(get 'x
-/// 'variable-documentation)' reads what `defvar' wrote there, in this Lisp for
-/// the same reason it does in that one.
+/// Property key for variable docstrings, written by `defvar` and read by `variable-doc`.
 pub const VARIABLE_DOCUMENTATION: &str = "variable-documentation";
 
-/// Which of an environment's three name spaces an operation is about.
-///
-/// A parameter rather than three near-identical copies of each operation: the
-/// walk, the clone and the released lock are the interesting part and they are
-/// the same in all three, and duplicating them is how the three drift apart
-/// later.
+/// The namespace used by shared binding and lookup operations.
 #[derive(Clone, Copy)]
 enum Namespace {
     Variables,
@@ -34,28 +20,31 @@ enum Namespace {
     Macros,
 }
 
+/// A lexical scope with independent variable, function, and macro bindings.
+///
+/// Lookups search the current scope before its parents. Symbol properties are
+/// global to the root. Prefer the accessors to direct table mutation.
+///
+/// # Panics
+///
+/// Binding and property accessors panic if the corresponding lock is poisoned.
 #[derive(Debug)]
 pub struct Env<T: LispContext> {
+    /// Variable bindings local to this scope.
     pub variables: RwLock<HashMap<String, LispExp<T>>>,
+    /// Function bindings local to this scope.
     pub functions: RwLock<HashMap<String, LispExp<T>>>,
+    /// Macro bindings local to this scope.
     pub macros: RwLock<HashMap<String, LispExp<T>>>,
-    /// What symbols carry besides a value and a function and where anything
-    /// keyed by a symbol belongs.
-    ///
-    /// Only a root has one. Properties are global and are *not* scoped: one
-    /// set inside a `let` is still there outside it, because a property
-    /// belongs to the symbol and a symbol is not a binding. So a child holds
-    /// `None` and the accessors walk up.
-    ///
-    /// Boxed, and not shared by an `Arc` on every environment, because
-    /// `new_child` runs on every function call: an `Arc` would trade a pointer
-    /// chase on a rare operation for an atomic increment on the hottest one.
-    /// `None` costs eight bytes and no allocation.
+    /// Global symbol properties, owned by the root only. Children store `None`;
+    /// property accessors walk to the root, so lexical shadowing does not hide properties.
     pub properties: Option<Box<PropertyTable<T>>>,
+    /// Enclosing lexical scope; `None` for the root.
     pub parent: Option<Arc<Env<T>>>,
 }
 
 impl<T: LispContext> Env<T> {
+    /// Create an empty root environment without standard functions.
     pub fn new_root() -> Arc<Self> {
         Arc::new(Self {
             variables: RwLock::new(HashMap::new()),
@@ -66,6 +55,7 @@ impl<T: LispContext> Env<T> {
         })
     }
 
+    /// Create an empty child scope that inherits bindings from `parent`.
     pub fn new_child(parent: &Arc<Env<T>>) -> Arc<Self> {
         Arc::new(Self {
             variables: RwLock::new(HashMap::new()),
@@ -76,7 +66,7 @@ impl<T: LispContext> Env<T> {
         })
     }
 
-    /// The environment holding the property table: the root of this chain.
+    /// Find the root-owned property table without holding locks along the parent chain.
     fn property_owner(&self) -> &Env<T> {
         let mut env = self;
         loop {
@@ -90,6 +80,7 @@ impl<T: LispContext> Env<T> {
         }
     }
 
+    /// Set a symbol property in the root, replacing any previous value.
     pub fn put_property(&self, symbol: &str, key: &str, value: LispExp<T>) {
         let owner = self.property_owner();
         if let Some(properties) = &owner.properties {
@@ -102,6 +93,7 @@ impl<T: LispContext> Env<T> {
         }
     }
 
+    /// Clone a symbol property from the root, or return `None` if absent.
     pub fn get_property(&self, symbol: &str, key: &str) -> Option<LispExp<T>> {
         let owner = self.property_owner();
         let properties = owner.properties.as_ref()?;
@@ -111,7 +103,6 @@ impl<T: LispContext> Env<T> {
         table.get(symbol)?.get(key).cloned()
     }
 
-    /// The table one namespace is kept in, here.
     fn table(&self, namespace: Namespace) -> &RwLock<HashMap<String, LispExp<T>>> {
         match namespace {
             Namespace::Variables => &self.variables,
@@ -120,17 +111,7 @@ impl<T: LispContext> Env<T> {
         }
     }
 
-    /// NAME's binding in one namespace, here or in the nearest parent that has
-    /// one.
-    ///
-    /// Iterative rather than recursive, and one function rather than three:
-    /// what makes a variable lookup different from a function lookup is which
-    /// of three fields it reads, and nothing else -- the walk, the clone, the
-    /// released lock and the `None` at the end were written out three times.
-    ///
-    /// The lock is dropped before stepping to the parent, for the reason
-    /// [`Self::collect_names`] gives: a chain of read locks held at once is a
-    /// lock order nothing else in the editor uses.
+    /// Find the nearest binding, releasing each lock before visiting its parent.
     fn lookup(&self, namespace: Namespace, name: &str) -> Option<LispExp<T>> {
         let mut env = self;
         loop {
@@ -147,7 +128,6 @@ impl<T: LispContext> Env<T> {
         }
     }
 
-    /// Bind NAME in one namespace, here.
     fn bind(&self, namespace: Namespace, name: String, val: LispExp<T>) {
         self.table(namespace)
             .write()
@@ -155,22 +135,14 @@ impl<T: LispContext> Env<T> {
             .insert(name, val);
     }
 
+    /// Clone the nearest variable binding, or return `None` if unbound.
     pub fn get_variable(&self, name: &str) -> Option<LispExp<T>> {
         self.lookup(Namespace::Variables, name)
     }
 
-    /// NAME's value as a number, if it is one and is at least FLOOR.
+    /// Return a finite numeric binding greater than or equal to `floor`.
     ///
-    /// Every setting the host reads out of Lisp is a setting Lisp may have set
-    /// to a string, or to a negative, or to an infinity -- `(/ 1.0 0)` is a
-    /// number and `Duration::from_secs_f64` panics on it. Seven readers each
-    /// wrote the same three guards by hand, which is seven chances to leave
-    /// `is_finite` out of one.
-    ///
-    /// FLOOR is a parameter and not a constant here because the floors differ
-    /// and the difference is meaningful: a watcher interval of 0.1s is
-    /// reasonable and an auto-save interval of 0.1s is not. Each caller keeps
-    /// its own, where a reader of that caller can see it.
+    /// Returns `None` for an unbound name, another value type, or an invalid number.
     pub fn number_at_least(&self, name: &str, floor: f64) -> Option<f64> {
         match self.get_variable(name) {
             Some(LispExp::Number(n)) if n.is_finite() && n >= floor => Some(n),
@@ -178,11 +150,9 @@ impl<T: LispContext> Env<T> {
         }
     }
 
-    /// NAME as a switch, with DEFAULT for "Lisp never said".
+    /// Return the binding's Lisp truth value, or `default` if unbound.
     ///
-    /// Unbound is *not* the same as nil, and the distinction is the whole
-    /// reason this takes a default: a `.lisp` file that failed to load must not
-    /// be able to turn auto-saving off by omission.
+    /// A binding to `nil` returns `false`, even when `default` is `true`.
     pub fn flag(&self, name: &str, default: bool) -> bool {
         match self.get_variable(name) {
             Some(value) => value.is_truthy(),
@@ -190,6 +160,9 @@ impl<T: LispContext> Env<T> {
         }
     }
 
+    /// Replace the nearest existing variable binding.
+    ///
+    /// Returns `false` if unbound; no binding is created in that case.
     pub fn update_variable(&self, name: &str, val: LispExp<T>) -> bool {
         if self
             .variables
@@ -209,23 +182,28 @@ impl<T: LispContext> Env<T> {
         false
     }
 
+    /// Clone the nearest function binding, or return `None` if unbound.
     pub fn get_function(&self, name: &str) -> Option<LispExp<T>> {
         self.lookup(Namespace::Functions, name)
     }
 
+    /// Clone the nearest macro binding, or return `None` if unbound.
     pub fn get_macro(&self, name: &str) -> Option<LispExp<T>> {
         self.lookup(Namespace::Macros, name)
     }
 
+    /// Bind a macro in this scope, replacing any local binding.
     pub fn set_macro(&self, name: String, val: LispExp<T>) {
         self.bind(Namespace::Macros, name, val);
     }
 
+    /// Bind a variable in this scope, replacing any local binding.
+    ///
+    /// Use [`Self::update_variable`] to modify an existing binding in a parent.
     pub fn set_variable(&self, name: String, val: LispExp<T>) {
         self.bind(Namespace::Variables, name, val);
     }
 
-    /// The root of this chain.
     fn root(&self) -> &Env<T> {
         let mut env = self;
         while let Some(parent) = env.parent.as_deref() {
@@ -234,45 +212,32 @@ impl<T: LispContext> Env<T> {
         env
     }
 
-    /// Bind NAME in the root, where it outlives the call that bound it.
+    /// Bind a variable in the root environment.
     ///
-    /// [`Env::set_variable`] binds *here*, which is what a `setq` inside a
-    /// function should do. A binding that is a mode of operation rather than
-    /// a local -- something the host turns on now and reads back on a later
-    /// keystroke -- must not go away when the function that turned it on
-    /// returns, and there is no way to notice that it did: the variable is
-    /// simply nil again, as though nothing had been asked for.
+    /// Unlike [`Self::set_variable`], this writes to the root even when called
+    /// from a child. A nearer binding can still shadow the new root value.
     pub fn set_root_variable(&self, name: String, val: LispExp<T>) {
         self.root().set_variable(name, val);
     }
 
+    /// Bind a function in this scope, replacing any local binding.
     pub fn set_function(&self, name: String, val: LispExp<T>) {
         self.bind(Namespace::Functions, name, val);
     }
 
-    /// Every variable name visible from here, sorted, each once.
+    /// Return visible variable names, sorted and deduplicated across parent scopes.
     pub fn variable_names(&self) -> Vec<String> {
         self.names_in(Namespace::Variables)
     }
 
-    /// Every function name visible from here, sorted, each once.
-    ///
-    /// The parent chain is walked outwards and a name already seen is not
-    /// added again: an inner binding *shadows* an outer one rather than
-    /// appearing twice, which is the same rule `get_function` follows. What
-    /// comes back is therefore the set of names that would resolve, not the
-    /// set of bindings that exist.
+    /// Return visible function names, sorted and deduplicated across parent scopes.
     pub fn function_names(&self) -> Vec<String> {
         self.names_in(Namespace::Functions)
     }
 
-    /// Every macro name visible from here, sorted, each once.
+    /// Return visible macro names, sorted and deduplicated across parent scopes.
     ///
-    /// Separate from [`Env::function_names`] because the two namespaces are
-    /// separate: `(defmacro when ...)` does not make `when` callable through
-    /// `funcall`, and anything reasoning about the language -- a completion
-    /// source offering names, say -- wants to tell a macro from a function
-    /// rather than receive one list it cannot take apart again.
+    /// Macros occupy a separate namespace from functions.
     pub fn macro_names(&self) -> Vec<String> {
         self.names_in(Namespace::Macros)
     }
@@ -285,11 +250,7 @@ impl<T: LispContext> Env<T> {
         names
     }
 
-    /// Append the names bound in one namespace here, then in its parents'.
-    ///
-    /// The lock is released before recursing. Holding it across the parent
-    /// call would mean holding a read lock on every environment in the chain
-    /// at once, in an order nothing else in the editor takes them in.
+    /// Collect names, releasing each lock before recursing into the parent.
     fn collect_names(&self, namespace: Namespace, into: &mut Vec<String>) {
         into.extend(
             self.table(namespace)
@@ -304,18 +265,7 @@ impl<T: LispContext> Env<T> {
     }
 }
 
-/// Environments compare by **identity**, not by contents.
-///
-/// This exists only because `Lambda` derives `PartialEq` and holds an
-/// `Arc<Env>`. It used to be `unreachable!()`, which made
-/// `(equal (lambda (x) x) (lambda (x) x))` panic and take the editor with it --
-/// reachable from a one-line program.
-///
-/// Identity is also the right answer rather than merely a safe one: two
-/// environments with equal bindings are still different scopes, and comparing
-/// them structurally would mean walking two parent chains and every binding in
-/// them, which is expensive, and cyclic once a closure captures the scope that
-/// holds it.
+/// Compare environments by identity; structural comparison could traverse closure cycles.
 impl<T: LispContext> PartialEq for Env<T> {
     fn eq(&self, other: &Env<T>) -> bool {
         std::ptr::eq(self, other)
