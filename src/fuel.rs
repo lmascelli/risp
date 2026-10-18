@@ -50,6 +50,17 @@ thread_local! {
     /// transition refills, so code that re-enters the evaluator cannot hand
     /// itself a fresh budget partway through an existing scope.
     static DEPTH: Cell<u32> = const { Cell::new(0) };
+
+    // Cleanup reserve shared by one outermost evaluation scope.
+    static UNWIND_FUEL: Cell<Option<u32>> = const { Cell::new(None) };
+
+    static UNWINDING: Cell<bool> = const { Cell::new(false) };
+
+    // Saved ordinary fuel while the cleanup uses its reserve.
+    static ORDINARY_FUEL: Cell<Option<u32>> = const { Cell::new(None) };
+
+    // Reserve consumption accumulated when a cleanup finishes.
+    static UNWIND_SPENT: Cell<u64> = const { Cell::new(0) };
 }
 
 /// Guard returned by [`FuelMeter::begin`]; closes the scope when dropped.
@@ -70,6 +81,30 @@ pub struct FuelScope {
 impl Drop for FuelScope {
     fn drop(&mut self) {
         DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+struct UnwindBudget {
+    reserve_start: u32,
+}
+
+impl Drop for UnwindBudget {
+    fn drop(&mut self) {
+        if let Some(ordinary_fuel) = ORDINARY_FUEL.replace(None) {
+            let remaining = FUEL.get().min(self.reserve_start);
+
+            UNWIND_SPENT.set(
+                UNWIND_SPENT
+                    .get()
+                    .saturating_add(u64::from(self.reserve_start - remaining)),
+            );
+
+            UNWIND_FUEL.set(Some(remaining));
+            FUEL.set(ordinary_fuel);
+        }
+
+        DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+        UNWINDING.set(false);
     }
 }
 
@@ -105,7 +140,18 @@ impl FuelMeter {
                 fuel.set(remaining);
                 Ok(())
             }
-            None => Err(Exhausted),
+            None => {
+                if UNWINDING.get() && ORDINARY_FUEL.get().is_none() {
+                    let reserve = UNWIND_FUEL.get().unwrap_or(0);
+
+                    if let Some(remaining) = reserve.checked_sub(amount) {
+                        ORDINARY_FUEL.set(Some(fuel.get()));
+                        fuel.set(remaining);
+                        return Ok(());
+                    }
+                }
+                Err(Exhausted)
+            }
         })
     }
 
@@ -115,6 +161,8 @@ impl FuelMeter {
         DEPTH.with(|depth| {
             if depth.get() == 0 {
                 FUEL.set(self.budget.load(Ordering::Relaxed));
+                UNWIND_FUEL.set(None);
+                UNWIND_SPENT.set(0);
             }
             depth.set(depth.get() + 1);
         });
@@ -127,15 +175,12 @@ impl FuelMeter {
     /// the host's configured budget.
     pub fn arm_thread(&self) {
         FUEL.set(self.budget.load(Ordering::Relaxed));
+        UNWIND_FUEL.set(None);
+        UNWIND_SPENT.set(0);
     }
 
     /// Raise this thread's remaining fuel to at least `amount`, without
     /// opening a scope or changing the configured budget.
-    ///
-    /// For running code that must complete even though the budget is spent --
-    /// `unwind-protect` cleanups, which otherwise cannot run at all after an
-    /// `OutOfFuel`, exactly when unwinding matters most. Bounded and one-shot,
-    /// so it relaxes the guard for a cleanup rather than removing it.
     pub fn grant(&self, amount: u32) {
         FUEL.with(|fuel| {
             if fuel.get() < amount {
@@ -151,6 +196,37 @@ impl FuelMeter {
     pub fn set_budget(&self, budget: u32) {
         self.budget.store(budget, Ordering::Relaxed);
         FUEL.set(budget);
+    }
+
+    /// Run cleanup code on ordinary fuel, falling back to a bounded reserve.
+    ///
+    /// Unspent ordinary fuel is preserved. Reserve fuel cannot escape.
+    /// The allowance is shared until the next outermost `begin()` or
+    /// `arm_thread()`. Nested cleanups cannot refill it.
+    pub fn with_unwind<R>(
+        &self,
+        allowance: u32,
+        cleanup: impl FnOnce() -> R,
+    ) -> R {
+        if UNWINDING.get() {
+            return cleanup();
+        }
+
+        let reserve = UNWIND_FUEL
+            .get()
+            .unwrap_or(allowance)
+            .min(allowance);
+
+        UNWIND_FUEL.set(Some(reserve));
+        UNWINDING.set(true);
+
+        DEPTH.with(|depth| depth.set(depth.get() + 1));
+
+        let _restore = UnwindBudget {
+            reserve_start: reserve,
+        };
+
+        cleanup()
     }
 }
 
@@ -178,41 +254,42 @@ pub fn set_remaining(amount: u32) {
 
 /// Run `body` with an effectively unlimited budget and report how much fuel it
 /// spent, alongside its result.
-///
-/// # Why this exists
-///
-/// Wall-clock timings describe the machine that took them. Fuel counts describe
-/// the *program*: one unit per reduction step, plus one per element for
-/// primitives that walk a list. They are exact integers, identical on every
-/// machine and reproducible to the unit, which makes them the only measurement
-/// in this codebase that can be committed to git and diffed to show a
-/// regression.
-///
-/// # Why it holds a scope of its own
-///
-/// `body` typically re-enters the host, and a host opens a metered scope per
-/// command. Were this to run at depth zero, that inner `begin()` would see
-/// depth 0, refill `FUEL` to the configured budget, and destroy the accounting
-/// mid-measurement. Holding a scope for the whole measurement makes every
-/// nested `begin()` a no-op refill-wise, so the counter only ever goes down.
-///
-/// The thread's real remaining fuel is saved and restored, so measuring cannot
-/// hand the surrounding scope a larger budget than it started with.
-struct RestoreFuel(u32);
+struct RestoreFuel(u32, Option<u32>, Option<u32>, u64);
 
 impl Drop for RestoreFuel {
     fn drop(&mut self) {
         FUEL.set(self.0);
+        UNWIND_FUEL.set(self.1);
+        ORDINARY_FUEL.set(self.2);
+        UNWIND_SPENT.set(self.3);
     }
 }
 
-pub fn measure<T, F: FnOnce() -> T>(meter: &FuelMeter, body: F) -> (T, u64) {
-    let restore = RestoreFuel(FUEL.get());
+pub fn measure<T, F: FnOnce() -> T>(
+    meter: &FuelMeter,
+    body: F,
+) -> (T, u64) {
+    let restore = RestoreFuel(
+        FUEL.get(),
+        UNWIND_FUEL.get(),
+        ORDINARY_FUEL.get(),
+        UNWIND_SPENT.get(),
+    );
+
     let scope = meter.begin();
+    let unwind_before = UNWIND_SPENT.get();
+
     FUEL.set(u32::MAX);
+
     let value = body();
-    let spent = u64::from(u32::MAX - FUEL.get());
+
+    let spent = u64::from(u32::MAX - FUEL.get())
+        .saturating_add(
+            UNWIND_SPENT.get().saturating_sub(unwind_before),
+        );
+
     drop(scope);
     drop(restore);
+
     (value, spent)
 }

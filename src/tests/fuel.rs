@@ -143,6 +143,10 @@ mod tests {
         fn begin_thread_evaluation(&self) {
             self.fuel.arm_thread();
         }
+
+        fn with_unwind<R>(&self, cleanup: impl FnOnce() -> R) -> R {
+            self.fuel.with_unwind(100, cleanup)
+        }
     }
 
     fn fuel_env(budget: u32) -> (Arc<Env<FuelCtx>>, FuelCtx) {
@@ -180,6 +184,118 @@ mod tests {
             env,
             ctx,
         )
+    }
+
+    #[test]
+    fn unwind_protect_does_not_refill_normal_evaluation() {
+        let (env, ctx) = fuel_env(50);
+        let _scope = ctx.fuel.begin();
+
+        assert_eq!(
+            eval_script(
+                "(dotimes (i 1000) (unwind-protect nil nil))",
+                env,
+                &ctx,
+            ),
+            Err(EvalError::OutOfFuel),
+        );
+    }
+
+    #[test]
+    fn unwind_protect_runs_cleanup_after_exhaustion() {
+        let (env, ctx) = fuel_env(20);
+        env.set_variable("cleaned".into(), LispExp::nil());
+
+        let _scope = ctx.fuel.begin();
+
+        assert_eq!(
+            eval_script(
+                "(unwind-protect
+                     (while t nil)
+                     (setq cleaned t))",
+                env.clone(),
+                &ctx,
+            ),
+            Err(EvalError::OutOfFuel),
+        );
+
+        assert_eq!(
+            env.get_variable("cleaned"),
+            Some(LispExp::t()),
+        );
+
+        assert_eq!(ctx.fuel.consume(1), Err(Exhausted));
+    }
+
+    #[test]
+    fn unwind_protect_runs_cleanup_after_last_ordinary_unit() {
+        // progn, unwind-protect and nil consume three ordinary units.
+        let (env, ctx) = fuel_env(3);
+        env.set_variable("cleaned".into(), LispExp::nil());
+
+        let _scope = ctx.fuel.begin();
+
+        assert_eq!(
+            eval_script(
+                "(unwind-protect nil (setq cleaned t))",
+                env.clone(),
+                &ctx,
+            ),
+            Ok(LispExp::nil()),
+        );
+
+        assert_eq!(
+            env.get_variable("cleaned"),
+            Some(LispExp::t()),
+        );
+
+        assert_eq!(ctx.fuel.consume(1), Err(Exhausted));
+    }
+
+    #[test]
+    fn nested_unwind_protect_cannot_refill_the_reserve() {
+        let (env, ctx) = fuel_env(20);
+        let _scope = ctx.fuel.begin();
+
+        assert_eq!(
+            eval_script(
+                "(unwind-protect
+                     (while t nil)
+                     (tick!)
+                     (unwind-protect
+                         (while t nil)
+                         (tick!)))",
+                env,
+                &ctx,
+            ),
+            Err(EvalError::OutOfFuel),
+        );
+
+        assert_eq!(ctx.ticks.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn unwind_reserve_is_shared_between_cleanups() {
+        let meter = FuelMeter::new(20);
+        let _scope = meter.begin();
+
+        // Ordinary cleanup work consumes ordinary fuel.
+        meter.with_unwind(10, || meter.consume(7).unwrap());
+        meter.consume(13).unwrap();
+
+        assert_eq!(meter.consume(1), Err(Exhausted));
+
+        // First cleanup spends seven reserve units.
+        meter.with_unwind(10, || meter.consume(7).unwrap());
+
+        // Reserve fuel is unavailable outside cleanup.
+        assert_eq!(meter.consume(1), Err(Exhausted));
+
+        // The next cleanup receives only the remaining three.
+        meter.with_unwind(10, || {
+            meter.consume(3).unwrap();
+            assert_eq!(meter.consume(1), Err(Exhausted));
+        });
     }
 
     /// `(spawn ...)` is fire-and-forget -- it returns nil immediately and never

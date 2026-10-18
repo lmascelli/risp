@@ -1043,23 +1043,26 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 // cleanup's own frames are not part of the failure.
                 let depth_after_body = ctx.call_frame_depth();
 
-                // Cleanups need something to run on. A body that ended in
-                // `OutOfFuel` has left the budget at zero, so without this the
-                // first step of the first cleanup fails the same way and
-                // nothing gets unwound.
-                ctx.begin_unwind();
+                let run_cleanups = || {
+                    let mut cleanup_error = None;
 
-                // Every cleanup runs even if an earlier one fails -- the whole
-                // point of `unwind-protect` is that these happen -- and the
-                // first failure is kept rather than propagated immediately.
-                let mut cleanup_error = None;
-                for cleanup in &args[1..] {
-                    if let Err(err) = eval(cleanup, env.clone(), ctx) {
-                        if cleanup_error.is_none() {
-                            cleanup_error = Some(err);
+                    for cleanup in &args[1..] {
+                        if let Err(err) = eval(cleanup, env.clone(), ctx) {
+                            if cleanup_error.is_none() {
+                                cleanup_error = Some(err);
+                            }
                         }
                     }
-                }
+
+                    cleanup_error
+                };
+
+                let cleanup_error = if args.len() > 1 {
+                    ctx.with_unwind(run_cleanups)
+                } else {
+                    run_cleanups()
+                };
+                
                 ctx.truncate_call_frames(depth_after_body);
 
                 // When both the body and a cleanup failed, the body's error is

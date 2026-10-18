@@ -20,18 +20,15 @@ pub trait LispContext: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'stat
     /// or debugging notices to the host without knowing how the host presents them.
     fn log_diagnostic(&self, _msg: &str) {}
 
-    /// Called by the evaluator immediately before running `unwind-protect`
-    /// cleanup forms.
+    /// Run the cleanup forms of `unwind-protect`.
     ///
-    /// A host that meters execution should grant a small, bounded allowance
-    /// here. Without one, a body that failed with `OutOfFuel` leaves nothing
-    /// for its cleanups: the first step of the first cleanup fails the same
-    /// way, so the guard cannot unwind a runaway loop -- which is precisely
-    /// the situation unwinding exists for.
-    ///
-    /// Default: a no-op, so hosts that do not meter pay nothing.
-    fn begin_unwind(&self) {}
-
+    /// Hosts may provide a bounded reserve after ordinary fuel is exhausted.
+    /// Reserve fuel must not escape into ordinary evaluation; nested cleanups
+    /// must share the remaining reserve rather than refill it.
+    fn with_unwind<R>(&self, cleanup: impl FnOnce() -> R) -> R {
+        cleanup()
+    }
+    
     /// Called by the evaluator when it begins evaluating on a **newly created
     /// thread** -- currently only the `(spawn ...)` special form.
     ///
