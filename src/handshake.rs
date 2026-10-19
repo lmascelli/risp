@@ -33,9 +33,9 @@ pub fn bootstrap_vm<T: LispContext>(ctx: &T) -> Result<Arc<Env<T>>, EvalError<T>
     "#;
 
     let mut parser = Parser::new(verification_script);
-    let ast = parser.next().or_else(|_| {
-        Err(EvalError::UncorrectFunctionDefinition)
-    })?;
+    let ast = parser
+        .next()
+        .or_else(|_| Err(EvalError::UncorrectFunctionDefinition))?;
 
     ctx.log_diagnostic("VM Handshake: Initiating verification script...");
 

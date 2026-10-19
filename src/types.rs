@@ -128,6 +128,11 @@ impl<T: LispContext> PartialEq for SharedFiber<T> {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct SharedThreadHandle<T: LispContext>(
+    pub Arc<RwLock<std::thread::JoinHandle<Result<LispExp<T>, EvalError<T>>>>>,
+);
+
 /// Native function signature: evaluated arguments, call environment, and host context.
 ///
 /// The environment is the caller's scope; a lambda instead uses its captured

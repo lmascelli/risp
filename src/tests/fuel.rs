@@ -92,7 +92,6 @@ mod tests {
         .expect("the child thread panicked");
     }
 
-
     /// Metering host that arms each spawned evaluation through `begin_thread_evaluation`.
     #[derive(Clone, Debug)]
     struct FuelCtx {
@@ -170,11 +169,7 @@ mod tests {
         let _scope = ctx.fuel.begin();
 
         assert_eq!(
-            eval_script(
-                "(dotimes (i 1000) (unwind-protect nil nil))",
-                env,
-                &ctx,
-            ),
+            eval_script("(dotimes (i 1000) (unwind-protect nil nil))", env, &ctx,),
             Err(EvalError::OutOfFuel),
         );
     }
@@ -197,10 +192,7 @@ mod tests {
             Err(EvalError::OutOfFuel),
         );
 
-        assert_eq!(
-            env.get_variable("cleaned"),
-            Some(LispExp::t()),
-        );
+        assert_eq!(env.get_variable("cleaned"), Some(LispExp::t()),);
 
         assert_eq!(ctx.fuel.consume(1), Err(Exhausted));
     }
@@ -214,18 +206,11 @@ mod tests {
         let _scope = ctx.fuel.begin();
 
         assert_eq!(
-            eval_script(
-                "(unwind-protect nil (setq cleaned t))",
-                env.clone(),
-                &ctx,
-            ),
+            eval_script("(unwind-protect nil (setq cleaned t))", env.clone(), &ctx,),
             Ok(LispExp::nil()),
         );
 
-        assert_eq!(
-            env.get_variable("cleaned"),
-            Some(LispExp::t()),
-        );
+        assert_eq!(env.get_variable("cleaned"), Some(LispExp::t()),);
 
         assert_eq!(ctx.fuel.consume(1), Err(Exhausted));
     }

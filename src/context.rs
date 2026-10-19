@@ -26,7 +26,7 @@ pub trait LispContext: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'stat
     fn with_unwind<R>(&self, cleanup: impl FnOnce() -> R) -> R {
         cleanup()
     }
-    
+
     /// Initialize host state on a newly spawned evaluation thread.
     ///
     /// Override this to arm thread-local fuel using [`crate::FuelMeter::arm_thread`].

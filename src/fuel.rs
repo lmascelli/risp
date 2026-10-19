@@ -207,19 +207,12 @@ impl FuelMeter {
     /// Unspent ordinary fuel is preserved. Reserve fuel cannot escape.
     /// The allowance is shared until the next outermost `begin()` or
     /// `arm_thread()`. Nested cleanups cannot refill it.
-    pub fn with_unwind<R>(
-        &self,
-        allowance: u32,
-        cleanup: impl FnOnce() -> R,
-    ) -> R {
+    pub fn with_unwind<R>(&self, allowance: u32, cleanup: impl FnOnce() -> R) -> R {
         if UNWINDING.get() {
             return cleanup();
         }
 
-        let reserve = UNWIND_FUEL
-            .get()
-            .unwrap_or(allowance)
-            .min(allowance);
+        let reserve = UNWIND_FUEL.get().unwrap_or(allowance).min(allowance);
 
         UNWIND_FUEL.set(Some(reserve));
         UNWINDING.set(true);
@@ -258,10 +251,7 @@ impl Drop for RestoreFuel {
 /// Includes cleanup-reserve charges and restores the previous counters when
 /// the call ends, including during panic unwinding. The configured budget
 /// is unchanged; the measurement allowance is large but finite.
-pub fn measure<T, F: FnOnce() -> T>(
-    meter: &FuelMeter,
-    body: F,
-) -> (T, u64) {
+pub fn measure<T, F: FnOnce() -> T>(meter: &FuelMeter, body: F) -> (T, u64) {
     let restore = RestoreFuel(
         FUEL.get(),
         UNWIND_FUEL.get(),
@@ -277,9 +267,7 @@ pub fn measure<T, F: FnOnce() -> T>(
     let value = body();
 
     let spent = u64::from(u32::MAX - FUEL.get())
-        .saturating_add(
-            UNWIND_SPENT.get().saturating_sub(unwind_before),
-        );
+        .saturating_add(UNWIND_SPENT.get().saturating_sub(unwind_before));
 
     drop(scope);
     drop(restore);

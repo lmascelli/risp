@@ -15,7 +15,6 @@ pub(super) fn cost(report: &mut Report) {
     list_primitives(report);
 }
 
-
 fn eval_core(report: &mut Report) {
     let bench = Bench::new();
     bench.run(&bench.parse("(defun countdown (n) (if (= n 0) 0 (countdown (- n 1))))"));
@@ -54,7 +53,6 @@ fn eval_core(report: &mut Report) {
         "100,000 tail-recursive frames ran without growing the Rust stack",
     );
 }
-
 
 fn calls(report: &mut Report) {
     let bench = Bench::new();
@@ -111,7 +109,6 @@ fn calls(report: &mut Report) {
     linear(report, "function call", &called);
     linear(report, "macro call", &expanded);
 }
-
 
 fn list_primitives(report: &mut Report) {
     let bench = Bench::new();
@@ -228,7 +225,6 @@ fn list_primitives(report: &mut Report) {
     }
 }
 
-
 pub(super) fn timing(report: &mut Report) {
     parser(report);
     scope_depth(report);
@@ -343,7 +339,6 @@ fn scope_depth(report: &mut Report) {
         ],
     );
 }
-
 
 fn scaling_row(key: &str, label: &str, s: &Scaling, unit: &str) -> Row {
     Row::new(

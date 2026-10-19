@@ -54,7 +54,7 @@ pub use fuel::{DEFAULT_FUEL, FuelMeter, FuelScope, set_remaining};
 pub use lispexp::LispExp;
 pub use parser::{Parser, form_to_data};
 pub use source_map::{Location, SourceMap};
-use types::{ConsCell, ConsIter, FiberState, SharedAtom, SharedFiber};
+use types::{ConsCell, ConsIter, FiberState, SharedAtom, SharedFiber, SharedThreadHandle};
 pub use types::{Frame, Lambda, LispPrimitive};
 use utils::{
     bind_lambda_args, condition_matches, data_to_form, error_data, error_symbol,

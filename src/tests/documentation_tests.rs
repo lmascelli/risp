@@ -34,7 +34,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn a_defvar_docstring_can_be_read_back() {
         let doc = eval_ok(
@@ -96,7 +95,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn re_evaluating_a_defvar_updates_the_docstring_but_not_the_value() {
         // Reloading refreshes the documentation while preserving the user's value.
@@ -126,7 +124,6 @@ mod tests {
         assert_eq!(text(&eval_in("(variable-doc 'kept)", env)), "Still true.");
     }
 
-
     #[test]
     fn a_let_shadows_the_value_and_not_the_documentation() {
         let env = env_with_primitives();
@@ -155,7 +152,6 @@ mod tests {
             "Made inside."
         );
     }
-
 
     #[test]
     fn a_bound_variable_with_no_docstring_says_so() {

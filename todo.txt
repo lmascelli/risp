@@ -1,0 +1,18 @@
+------------------------------
+
+* 18-10-2026
+
+- Creare un punto di accesso unificato all'interprete. Ad esempio una struttura
+  Risp che permetta di essere inizializzata sull'host come
+
+      Risp::new(host)
+
+  e quindi inferire il tipo generico dell'host e che fornisca queste operazioni:
+
+  eval_source(source) -> Result<LispExp, EvalError>
+  eval_form(form: LispExp) -> Result<LispExp, EvalError>
+  call(name, argument) -> Result<LispExp, EvalError>
+  register_function(name, primitive)
+
+- Aggiungere all'enum di LispExp il ThreadHandle che permette di interagire
+  con un thread creato tramite spawn

@@ -5,7 +5,6 @@ mod tests {
     use crate::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
 
-
     fn native_add(
         args: &[LispExp<()>],
         _env: Arc<Env<()>>,

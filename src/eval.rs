@@ -263,7 +263,9 @@ fn eval_step_permitted<T: LispContext>(
         | LispExp::Number(_)
         | LispExp::Atom(_)
         | LispExp::Fiber(_)
-        | LispExp::Lambda(_) => Ok(EvalStep::Done(exp.clone())),
+        | LispExp::Lambda(_)
+        | LispExp::ThreadHandle(_)
+        => Ok(EvalStep::Done(exp.clone())),
 
         LispExp::Primitive { pointer: _, doc: _ } => Ok(EvalStep::Done(exp.clone())),
 
@@ -434,15 +436,23 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 let lambda_clone = lambda_data.clone();
                 let mut thread_ctx = ctx.clone();
 
-                std::thread::spawn(move || {
+                let handle = std::thread::spawn(move || {
                     thread_ctx.begin_thread_evaluation();
                     let thread_frame = Env::new_child(&lambda_clone.env);
+                    let mut ret = LispExp::nil();
                     for exp in &lambda_clone.body {
-                        if let Err(err) = eval(exp, thread_frame.clone(), &mut thread_ctx) {
-                            thread_ctx.log_diagnostic(&format!("[LISP thread] {err:?}"));
-                            break;
+                        match eval(exp, thread_frame.clone(), &mut thread_ctx) {
+                            Ok(value) => {
+                                ret = value;
+                            }
+                            Err(err) => {
+                                thread_ctx.log_diagnostic(&format!("[LISP thread] {err:?}"));
+                                return Err(err);
+                            }
                         }
                     }
+
+                    return Ok(ret);
                 });
 
                 Ok(EvalStep::Done(LispExp::form(vec![])))
@@ -914,7 +924,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 } else {
                     run_cleanups()
                 };
-                
+
                 ctx.truncate_call_frames(depth_after_body);
 
                 // Preserve the body's error if cleanup also fails; log the cleanup error.

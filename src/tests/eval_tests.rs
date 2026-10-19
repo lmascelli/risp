@@ -245,10 +245,7 @@ mod test {
             eval(&empty_vec, env.clone(), &mut ctx).unwrap(),
             LispExp::vec(vec![])
         );
-
     }
-
-
 
     #[derive(Debug)]
     struct TestHost {

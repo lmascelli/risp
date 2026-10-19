@@ -1,7 +1,6 @@
 //! Inspect bindings and signatures in the variable, function, and macro namespaces.
 use super::*;
 
-
 const ALL_FUNCTIONS_DOC: &str = "(all-functions): Return the names of every function visible \
      from the current environment, as a sorted list of strings -- primitives and Lisp \
      definitions alike, since nothing calling them can tell the difference.\n\n\

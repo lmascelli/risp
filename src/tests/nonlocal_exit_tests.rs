@@ -21,7 +21,6 @@ mod tests {
         eval_str(source).unwrap_or_else(|e| panic!("eval of `{source}` failed: {e:?}"))
     }
 
-
     #[test]
     fn a_catch_without_a_throw_returns_its_last_body_form() {
         assert_eq!(eval_ok("(catch 'tag 1 2 3)"), LispExp::number(3.0));
@@ -105,7 +104,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn condition_case_returns_the_body_value_when_nothing_fails() {
         assert_eq!(
@@ -154,7 +152,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn a_handler_receives_the_offending_value_itself_not_a_rendering_of_it() {
         // Handlers receive the offending number as data, so they can compute with it.
@@ -196,7 +193,6 @@ mod tests {
             EvalError::Signal { .. }
         ));
     }
-
 
     #[test]
     fn a_condition_case_does_not_intercept_a_throw() {

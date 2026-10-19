@@ -2,6 +2,7 @@
 
 use super::{
     ConsCell, ConsIter, FiberState, Lambda, LispContext, LispPrimitive, SharedAtom, SharedFiber,
+    SharedThreadHandle,
 };
 use std::{
     borrow::Cow,
@@ -44,7 +45,6 @@ fn t_name() -> &'static Arc<String> {
     T.get_or_init(|| intern("t".to_string()))
 }
 
-
 /// A Lisp value or reader syntax node. Clones share compound allocations.
 ///
 /// Use data cons lists for runtime values and forms for executable syntax.
@@ -82,6 +82,7 @@ pub enum LispExp<T: LispContext> {
     Atom(SharedAtom<T>),
     /// A cooperative suspended computation.
     Fiber(SharedFiber<T>),
+    ThreadHandle(SharedThreadHandle<T>),
 }
 
 /// Compare cons spines iteratively to avoid stack growth on long flat lists.
@@ -233,6 +234,8 @@ impl<T: LispContext> std::fmt::Debug for LispExp<T> {
                 Ok(_) => write!(f, "#<fiber>"),
                 Err(_) => write!(f, "#<fiber running>"),
             },
+
+            LispExp::ThreadHandle(t) => write!(f, "#t<thread-handle>"),
         }
     }
 }
