@@ -445,6 +445,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                             Ok(value) => {
                                 ret = value;
                             }
+                            
                             Err(err) => {
                                 thread_ctx.log_diagnostic(&format!("[LISP thread] {err:?}"));
                                 return Err(err);
