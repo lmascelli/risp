@@ -71,6 +71,8 @@ pub enum EvalError<T: LispContext> {
     BackquoteNotOneArgument,
     /// The host refused an execution charge.
     OutOfFuel,
+    /// Evaluation exceeded the supported nesting depth.
+    EvalDepthExceeded,
     /// The handler variable of `condition-case` is neither a symbol nor nil.
     ConditionCaseInvalidVariable,
     /// A `condition-case` handler is not a nonempty syntax list.

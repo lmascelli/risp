@@ -172,6 +172,7 @@ pub(super) fn error_symbol<T: LispContext>(err: &EvalError<T>) -> LispExp<T> {
         EvalError::WrongNumberOfArguments { .. } => "wrong-number-of-arguments",
         EvalError::WrongArgumentType { .. } => "wrong-type-argument",
         EvalError::OutOfFuel => "out-of-fuel",
+        EvalError::EvalDepthExceeded => "eval-depth-exceeded",
         EvalError::RuntimeMessage(_) => "runtime-error",
         _ => "error",
     };

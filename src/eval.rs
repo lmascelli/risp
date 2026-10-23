@@ -7,6 +7,12 @@ use super::{
 };
 use std::{cell::Cell, collections::HashMap, sync::Arc};
 
+/// Maximum number of simultaneously active evaluation steps.
+///
+/// Tail calls do not accumulate steps because they use the trampoline.
+/// This limit protects recursive evaluation on the native stack.
+const MAX_EVAL_DEPTH: usize = 32;
+
 enum EvalStep<T: LispContext> {
     Done(LispExp<T>),
     TailCall(LispExp<T>, Arc<Env<T>>),
@@ -17,6 +23,33 @@ thread_local! {
     /// `eval_step` consumes it before evaluating subexpressions, preventing a
     /// statement's permission from leaking into an argument. Tail calls preserve it.
     static YIELD_PERMITTED: Cell<bool> = const { Cell::new(false) };
+
+    static EVAL_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+struct EvalDepthGuard;
+
+impl EvalDepthGuard {
+    fn enter<T: LispContext>() -> Result<Self, EvalError<T>> {
+        EVAL_DEPTH.with(|depth| {
+            let current = depth.get();
+
+            if current >= MAX_EVAL_DEPTH {
+                return Err(EvalError::EvalDepthExceeded);
+            }
+
+            depth.set(current + 1);
+            Ok(Self)
+        })
+    }
+}
+
+impl Drop for EvalDepthGuard {
+    fn drop(&mut self) {
+        EVAL_DEPTH.with(|depth| {
+            depth.set(depth.get() - 1);
+        });
+    }
 }
 
 /// Allow the next evaluation on this thread to suspend.
@@ -109,11 +142,14 @@ fn eval_step<T: LispContext>(
     ctx: &T,
 ) -> Result<EvalStep<T>, EvalError<T>> {
     let permitted = take_yield_permission();
+    let _depth = EvalDepthGuard::enter::<T>()?;
     let step = eval_step_permitted(exp, env, ctx, permitted);
+    
     // A tail call continues the same statement, so its yield permission carries over.
     if permitted && matches!(step, Ok(EvalStep::TailCall(..))) {
         grant_yield_permission();
     }
+    
     step
 }
 

@@ -12,6 +12,7 @@ mod tests {
 mod backtrace_tests;
 mod base_env_tests;
 mod documentation_tests;
+mod eval_depth_tests;
 mod eval_tests;
 mod fiber_tests;
 mod fuel;
