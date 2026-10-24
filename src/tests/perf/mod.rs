@@ -2,12 +2,23 @@
 //!
 //! Run only with:
 //! `cargo test tests::perf::interpreter_performance_suite -- --ignored --exact --test-threads=1`
+#![cfg(test)]
+#[cfg(feature = "perf-alloc")]
+mod allocation_workloads;
+#[cfg(feature = "perf-alloc")]
+mod allocations;
+mod destruction;
+#[cfg(not(feature = "perf-alloc"))]
 mod interpreter;
+#[cfg(not(feature = "perf-alloc"))]
 mod metrics;
 mod report;
+#[cfg(not(feature = "perf-alloc"))]
+mod workloads;
 
 use report::{Kind, Report};
 #[test]
+#[cfg(not(feature = "perf-alloc"))]
 #[ignore = "run explicitly with the documented performance command"]
 fn interpreter_performance_suite() {
     let mut cost = Report::new(
@@ -26,6 +37,8 @@ fn interpreter_performance_suite() {
         "Each duration is the median of nine measured repetitions, with the observed min–max range shown. Ratios use medians. Timing targets are advisory; only fuel-accounting and functional checks fail the command.".into(),
     );
     interpreter::timing(&mut timing);
+    workloads::timing(&mut timing);
+    destruction::timing(&mut timing);
     failures.extend(timing.finish());
 
     assert!(
@@ -36,8 +49,25 @@ fn interpreter_performance_suite() {
     );
 }
 
+#[test]
+#[cfg(feature = "perf-alloc")]
+#[ignore = "run explicitly with --features perf-alloc; not an elapsed-time benchmark"]
+fn interpreter_allocation_suite() {
+    let mut report = Report::new(
+        Kind::Allocations,
+        "performance-allocations.txt",
+        "risp performance: allocator requests",
+        "Current-thread successful System allocator requests in explicit windows. Fixture setup, validation and report writing are excluded. Requested bytes are cumulative requests, not live memory or RSS. This instrumented binary must not be used for elapsed-time comparisons.".into(),
+    );
+    destruction::allocations(&mut report);
+    allocation_workloads::run(&mut report);
+    assert!(report.finish().is_empty());
+}
+
 mod suite {
-    use crate::{Env, EvalError, FuelMeter, LispContext, LispExp, Parser, eval, measure};
+    #[cfg(not(feature = "perf-alloc"))]
+    use crate::measure;
+    use crate::{Env, EvalError, FuelMeter, LispContext, LispExp, Parser, eval};
 
     /// Minimal host for measuring interpreter fuel costs.
     #[derive(Debug, Clone)]
@@ -74,6 +104,15 @@ mod suite {
         pub env: Arc<Env<Meter>>,
     }
 
+    impl Drop for Bench {
+        fn drop(&mut self) {
+            // Named closures capture this root. Break fixture-owned cycles.
+            self.env.variables.write().unwrap().clear();
+            self.env.functions.write().unwrap().clear();
+            self.env.macros.write().unwrap().clear();
+        }
+    }
+
     impl Bench {
         pub fn new() -> Self {
             let env = Env::new_root();
@@ -94,6 +133,7 @@ mod suite {
             eval(ast, self.env.clone(), &self.ctx).expect("benchmark script failed to evaluate")
         }
 
+        #[cfg(not(feature = "perf-alloc"))]
         pub fn cost(&self, ast: &LispExp<Meter>) -> u64 {
             measure(&self.ctx.fuel, || {
                 self.run(ast);
@@ -103,6 +143,7 @@ mod suite {
     }
 
     /// Exact fuel scaling at `n`, `2n` and `4n`.
+    #[cfg(not(feature = "perf-alloc"))]
     pub(super) struct Scaling {
         pub n: usize,
         pub c1: u64,
@@ -110,6 +151,7 @@ mod suite {
         pub c4: u64,
     }
 
+    #[cfg(not(feature = "perf-alloc"))]
     impl Scaling {
         pub fn measure(bench: &Bench, n: usize, build: impl Fn(usize) -> String) -> Self {
             let cost_at = |size: usize| bench.cost(&bench.parse(&build(size)));
@@ -143,5 +185,6 @@ mod suite {
         }
     }
 
+    #[cfg(not(feature = "perf-alloc"))]
     pub(super) const SHAPE_TOLERANCE: f64 = 0.02;
 }

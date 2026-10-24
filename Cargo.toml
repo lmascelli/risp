@@ -2,3 +2,7 @@
 name = "risp"
 version = "0.1.0"
 edition = "2024"
+
+[features]
+# Optional test-only allocator instrumentation; run separately from timing.
+perf-alloc = []

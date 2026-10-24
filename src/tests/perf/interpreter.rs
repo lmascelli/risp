@@ -1,5 +1,5 @@
 //! Interpreter benchmarks using the minimal metering host in [`super::suite`].
-use super::metrics::{per_unit_ns, ratio, time_median};
+use super::metrics::{per_unit_ns, ratio, repeat_elapsed, time_median};
 use super::report::{Report, Row};
 use super::suite::{Bench, Meter, SHAPE_TOLERANCE, Scaling};
 use crate::{LispExp, Parser};
@@ -30,10 +30,8 @@ fn eval_core(report: &mut Report) {
     report.section(
         "EVALUATOR CORE LOOP",
         "Special-form dispatch, variable lookup and primitive invocation, exercised\n\
-         together. The broadest health check there is: anything that made per-step\n\
-         cost depend on how much work had already been done -- a growing environment\n\
-         chain, an unbounded frame stack, a cache that never evicts -- shows up here\n\
-         before it shows up anywhere else.",
+         together. These counts describe charged Lisp work, not Rust execution time.\n\
+         Elapsed rows separately expose implementation overhead that fuel cannot see.",
         vec![
             scaling_row(
                 "eval/loop-iteration",
@@ -245,38 +243,60 @@ fn parser(report: &mut Report) {
 
     // Use a workload long enough to reduce scheduler noise in timing ratios.
     const FORMS: usize = 4_000;
-    let time_parse = |src: &str| {
-        time_median(|| {
-            let ast: LispExp<Meter> = Parser::new(src).next().expect("source must parse");
-            assert!(matches!(ast, LispExp::Form(_)));
+    let measure = |src: &str, phase: &str| {
+        repeat_elapsed(|| {
+            if phase == "drop" {
+                let ast: LispExp<Meter> = Parser::new(src).next().expect("source must parse");
+                let start = std::time::Instant::now();
+                drop(std::hint::black_box(ast));
+                start.elapsed()
+            } else {
+                let start = std::time::Instant::now();
+                let parsed = Parser::new(std::hint::black_box(src)).next::<Meter>();
+                if phase == "parse-and-drop" {
+                    drop(std::hint::black_box(parsed.expect("source must parse")));
+                    start.elapsed()
+                } else {
+                    let elapsed = start.elapsed();
+                    let ast = parsed.expect("source must parse");
+                    assert!(matches!(ast, LispExp::Form(_)));
+                    std::hint::black_box(&ast);
+                    drop(ast);
+                    elapsed
+                }
+            }
         })
     };
-    let small = time_parse(&build(FORMS));
-    let large = time_parse(&build(FORMS * 2));
-
-    let ns = per_unit_ns(small, FORMS as u64);
-    let growth = ratio(large.as_secs_f64(), small.as_secs_f64());
-
+    let small_src = build(FORMS);
+    let large_src = build(FORMS * 2);
+    let mut rows = Vec::new();
+    for (phase, label) in [
+        ("parse", "parse only"),
+        ("drop", "release prepared AST"),
+        ("parse-and-drop", "parse + release AST"),
+    ] {
+        let small = measure(&small_src, phase);
+        let large = measure(&large_src, phase);
+        let growth = ratio(large.as_secs_f64(), small.as_secs_f64());
+        rows.push(Row::timed(
+            format!("parser/v2/{phase}/form-ns"),
+            label,
+            per_unit_ns(small, FORMS as u64),
+            small.display_ns_per_unit(FORMS as u64, "ns/source-form"),
+            "4,000 source forms; nine samples after one warm-up",
+        ));
+        rows.push(Row::new(
+            format!("parser/v2/{phase}/growth"),
+            format!("{label}: doubling source"),
+            growth,
+            format!("{growth:.2}x"),
+            "ratio of medians at 8,000 vs 4,000 source forms; advisory",
+        ));
+    }
     report.section(
-        "PARSER",
-        "Source text to AST. Not fuel-charged -- nothing is evaluating yet -- so this\n\
-         is one of the few interpreter costs that only a clock can see.",
-        vec![
-            Row::timed(
-                "parser/form-ns",
-                "parse one form",
-                ns,
-                small.display_ns_per_unit(FORMS as u64, "ns/form"),
-                "median; fixed 4,000-form source",
-            ),
-            Row::new(
-                "parser/growth",
-                "doubling the source",
-                growth,
-                format!("{growth:.2}x"),
-                "advisory target: below 3x",
-            ),
-        ],
+        "PARSER AND AST LIFETIME",
+        "Parsing and AST destruction have separate measured intervals, alongside their combined lifetime cost. Source construction is always excluded. Isolated parse and drop samples have different cache histories; their medians need not sum to the combined median. Keys are versioned because the original parser row included destruction.",
+        rows,
     );
 }
 

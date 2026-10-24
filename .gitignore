@@ -3,3 +3,5 @@ target
 rsedit.log
 performance-cost.txt
 performance-timing.txt
+performance-allocations.txt
+perf-results/
