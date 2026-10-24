@@ -85,46 +85,94 @@ pub enum LispExp<T: LispContext> {
     ThreadHandle(SharedThreadHandle<T>),
 }
 
-/// Compare cons spines iteratively to avoid stack growth on long flat lists.
-/// Closures compare by identity rather than traversing captured environments.
+/// Compare compound values using an explicit work stack.
+/// Closures retain identity-based equality.
 #[allow(unpredictable_function_pointer_comparisons)]
 impl<T: LispContext> PartialEq for LispExp<T> {
     fn eq(&self, other: &Self) -> bool {
         use LispExp::*;
-        match (self, other) {
-            (Cons(_), Cons(_)) => {
-                let mut left = self.clone();
-                let mut right = other.clone();
-                loop {
-                    match (&left, &right) {
-                        (Cons(a), Cons(b)) => {
-                            if Arc::ptr_eq(a, b) {
-                                return true;
-                            }
-                            if a.car != b.car {
-                                return false;
-                            }
-                            let (next_left, next_right) = (a.cdr.clone(), b.cdr.clone());
-                            left = next_left;
-                            right = next_right;
-                        }
-                        _ => return left == right,
+
+        let mut pending = Vec::new();
+        let mut current = (self, other);
+
+        loop {
+            match current {
+                (Cons(a), Cons(b)) => {
+                    if !Arc::ptr_eq(a, b) {
+                        pending.push((&a.cdr, &b.cdr));
+                        current = (&a.car, &b.car);
+                        continue;
                     }
                 }
+
+                (Form(a), Form(b)) | (Vector(a), Vector(b)) => {
+                    if a.len() != b.len() {
+                        return false;
+                    }
+
+                    pending.extend(a.iter().zip(b.iter()).rev());
+                }
+
+                (Map(a), Map(b)) => {
+                    if a.len() != b.len() {
+                        return false;
+                    }
+
+                    for (key, value) in a.iter() {
+                        let Some(other_value) = b.get(key) else {
+                            return false;
+                        };
+
+                        pending.push((value, other_value));
+                    }
+                }
+
+                (Lambda(a), Lambda(b)) => {
+                    if !Arc::ptr_eq(a, b) {
+                        return false;
+                    }
+                }
+
+                (Number(a), Number(b)) => {
+                    if a != b {
+                        return false;
+                    }
+                }
+
+                (Symbol(a), Symbol(b)) | (String(a), String(b)) => {
+                    if a != b {
+                        return false;
+                    }
+                }
+
+                (Atom(a), Atom(b)) => {
+                    if a != b {
+                        return false;
+                    }
+                }
+
+                (Fiber(a), Fiber(b)) => {
+                    if a != b {
+                        return false;
+                    }
+                }
+
+                (
+                    Primitive { pointer: a, .. },
+                    Primitive { pointer: b, .. },
+                ) => {
+                    if a != b {
+                        return false;
+                    }
+                }
+
+                _ => return false,
             }
 
-            (Lambda(a), Lambda(b)) => Arc::ptr_eq(a, b),
-
-            (Form(a), Form(b)) => a == b,
-            (Vector(a), Vector(b)) => a == b,
-            (Map(a), Map(b)) => a == b,
-            (Number(a), Number(b)) => a == b,
-            (Symbol(a), Symbol(b)) => a == b,
-            (String(a), String(b)) => a == b,
-            (Atom(a), Atom(b)) => a == b,
-            (Fiber(a), Fiber(b)) => a == b,
-            (Primitive { pointer: a, .. }, Primitive { pointer: b, .. }) => a == b,
-            _ => false,
+            match pending.pop() {
+                Some(pair) => current = pair,
+                None => return true,
+            }
         }
     }
 }

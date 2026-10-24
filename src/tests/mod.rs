@@ -13,6 +13,7 @@ mod backtrace_tests;
 mod base_env_tests;
 mod cons_drop_tests;
 mod documentation_tests;
+mod equality_tests;
 mod eval_depth_tests;
 mod eval_tests;
 mod fiber_tests;
