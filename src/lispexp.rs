@@ -1,8 +1,8 @@
 //! Lisp values, syntax forms, symbol interning, equality, and printing.
 
 use super::{
-    ConsCell, ConsIter, FiberState, Lambda, LispContext, LispPrimitive, SharedAtom, SharedFiber,
-    SharedThreadHandle,
+    ConsCell, ConsIter, FiberState, Lambda, LispContext, LispMap, LispPrimitive, LispVec,
+    SharedAtom, SharedFiber, SharedThreadHandle,
 };
 use std::{
     borrow::Cow,
@@ -54,15 +54,15 @@ fn t_name() -> &'static Arc<String> {
 pub enum LispExp<T: LispContext> {
     /// Vector-backed syntax used for evaluation. Use [`Self::proper_list`]
     /// for data returned to Lisp; an empty form is also treated as nil.
-    Form(Arc<Vec<LispExp<T>>>),
+    Form(Arc<LispVec<T>>),
 
     /// Data cons cell; nil terminates a proper list, another value a dotted list.
     Cons(Arc<ConsCell<T>>),
 
     /// A vector of Lisp values.
-    Vector(Arc<Vec<LispExp<T>>>),
+    Vector(Arc<LispVec<T>>),
     /// A map keyed by strings or symbol names.
-    Map(Arc<HashMap<String, LispExp<T>>>),
+    Map(Arc<LispMap<T>>),
     /// An IEEE 754 double-precision number.
     Number(f64),
     /// An interned symbol name.
@@ -157,10 +157,7 @@ impl<T: LispContext> PartialEq for LispExp<T> {
                     }
                 }
 
-                (
-                    Primitive { pointer: a, .. },
-                    Primitive { pointer: b, .. },
-                ) => {
+                (Primitive { pointer: a, .. }, Primitive { pointer: b, .. }) => {
                     if a != b {
                         return false;
                     }
@@ -187,11 +184,7 @@ impl<T: LispContext> std::fmt::Debug for LispExp<T> {
             Tail(&'a LispExp<C>),
             Sequence(std::slice::Iter<'a, LispExp<C>>, bool),
             MapEntries(
-                std::collections::hash_map::Iter<
-                    'a,
-                    String,
-                    LispExp<C>,
-                >,
+                std::collections::hash_map::Iter<'a, String, LispExp<C>>,
                 bool,
             ),
         }
@@ -266,10 +259,7 @@ impl<T: LispContext> std::fmt::Debug for LispExp<T> {
                     }
 
                     LispExp::Number(n) => {
-                        if n.is_finite()
-                            && n.fract() == 0.0
-                            && n.abs() < 1e15
-                        {
+                        if n.is_finite() && n.fract() == 0.0 && n.abs() < 1e15 {
                             write!(f, "{}", *n as i64)?;
                         } else {
                             write!(f, "{}", n)?;
@@ -323,15 +313,13 @@ impl<T: LispContext> std::fmt::Debug for LispExp<T> {
                     // Atoms may contain themselves or be locked by the caller.
                     LispExp::Atom(_) => f.write_str("#<atom>")?,
 
-                    LispExp::Fiber(fiber) => {
-                        match fiber.0.try_read() {
-                            Ok(state) if state.is_done => {
-                                f.write_str("#<fiber done>")?;
-                            }
-                            Ok(_) => f.write_str("#<fiber>")?,
-                            Err(_) => f.write_str("#<fiber running>")?,
+                    LispExp::Fiber(fiber) => match fiber.0.try_read() {
+                        Ok(state) if state.is_done => {
+                            f.write_str("#<fiber done>")?;
                         }
-                    }
+                        Ok(_) => f.write_str("#<fiber>")?,
+                        Err(_) => f.write_str("#<fiber running>")?,
+                    },
 
                     LispExp::ThreadHandle(_) => {
                         f.write_str("#t<thread-handle>")?;
@@ -448,17 +436,17 @@ impl<T: LispContext> LispExp<T> {
 
     /// Build executable syntax. Use [`Self::proper_list`] for runtime list data.
     pub fn form(value: Vec<LispExp<T>>) -> LispExp<T> {
-        LispExp::Form(Arc::new(value))
+        LispExp::Form(Arc::new(LispVec(value)))
     }
 
     /// Create a vector value, distinct from a data list or syntax form.
     pub fn vec(value: Vec<LispExp<T>>) -> LispExp<T> {
-        LispExp::Vector(Arc::new(value))
+        LispExp::Vector(Arc::new(LispVec(value)))
     }
 
     /// Create a map with string keys.
     pub fn map(value: HashMap<String, LispExp<T>>) -> LispExp<T> {
-        LispExp::Map(Arc::new(value))
+        LispExp::Map(Arc::new(LispMap(value)))
     }
 
     /// Wrap a closure and share its allocation across clones.

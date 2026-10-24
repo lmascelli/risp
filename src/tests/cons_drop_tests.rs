@@ -54,10 +54,7 @@ fn dropping_an_alternating_chain_does_not_overflow() {
 
 #[test]
 fn dropping_a_parent_preserves_a_shared_child() {
-    let child = LispExp::<()>::cons(
-        LispExp::number(42.0),
-        LispExp::nil(),
-    );
+    let child = LispExp::<()>::cons(LispExp::number(42.0), LispExp::nil());
 
     let parent = LispExp::cons(child.clone(), child.clone());
 

@@ -369,7 +369,7 @@ fn primitive_reverse<T: LispContext>(
         }
         LispExp::Vector(v) => {
             charge(ctx, v.len())?;
-            let mut v = (**v).clone();
+            let mut v = (**v).to_vec();
             v.reverse();
             Ok(LispExp::vec(v))
         }

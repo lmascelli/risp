@@ -12,6 +12,7 @@ mod tests {
 mod backtrace_tests;
 mod base_env_tests;
 mod cons_drop_tests;
+mod container_drop_tests;
 mod documentation_tests;
 mod equality_tests;
 mod eval_depth_tests;
@@ -24,7 +25,6 @@ mod lexical_context;
 mod lisp_core_compliance_tests;
 mod nonlocal_exit_tests;
 mod parser_tests;
-// #[cfg(test)]
 mod perf;
 mod printing_tests;
 mod source_map_tests;

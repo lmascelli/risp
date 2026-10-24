@@ -1,7 +1,7 @@
 //! Expression evaluation, tail calls, and resumable statement continuations.
 
 use super::{
-    Env, EvalError, FiberState, Frame, Lambda, LispContext, LispExp, VARIABLE_DOCUMENTATION,
+    Env, EvalError, FiberState, Frame, Lambda, LispContext, LispExp, LispVec, VARIABLE_DOCUMENTATION,
     bind_lambda_args, condition_matches, data_to_form, error_data, error_symbol,
     parse_lambda_params,
 };
@@ -126,7 +126,7 @@ fn note_error_origin<T: LispContext>(exp: &LispExp<T>, error: &EvalError<T>, ctx
 /// Suspended calls have already popped their frame and are skipped.
 #[cold]
 #[inline(never)]
-fn note_call_site<T: LispContext>(form: &Arc<Vec<LispExp<T>>>, error: &EvalError<T>, ctx: &T) {
+fn note_call_site<T: LispContext>(form: &Arc<LispVec<T>>, error: &EvalError<T>, ctx: &T) {
     if let EvalError::Yielded { .. } = error {
         return;
     }
@@ -144,12 +144,12 @@ fn eval_step<T: LispContext>(
     let permitted = take_yield_permission();
     let _depth = EvalDepthGuard::enter::<T>()?;
     let step = eval_step_permitted(exp, env, ctx, permitted);
-    
+
     // A tail call continues the same statement, so its yield permission carries over.
     if permitted && matches!(step, Ok(EvalStep::TailCall(..))) {
         grant_yield_permission();
     }
-    
+
     step
 }
 
@@ -300,8 +300,7 @@ fn eval_step_permitted<T: LispContext>(
         | LispExp::Atom(_)
         | LispExp::Fiber(_)
         | LispExp::Lambda(_)
-        | LispExp::ThreadHandle(_)
-        => Ok(EvalStep::Done(exp.clone())),
+        | LispExp::ThreadHandle(_) => Ok(EvalStep::Done(exp.clone())),
 
         LispExp::Primitive { pointer: _, doc: _ } => Ok(EvalStep::Done(exp.clone())),
 
@@ -481,7 +480,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                             Ok(value) => {
                                 ret = value;
                             }
-                            
+
                             Err(err) => {
                                 thread_ctx.log_diagnostic(&format!("[LISP thread] {err:?}"));
                                 return Err(err);

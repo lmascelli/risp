@@ -2,7 +2,7 @@
 //!
 //! Each entry keeps a weak reference to prevent address reuse while indexed,
 //! without retaining the form itself. Dead entries are swept during recording.
-use super::{LispContext, LispExp};
+use super::{LispContext, LispExp, LispVec};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex, Weak};
@@ -49,14 +49,14 @@ pub struct SourceMap {
     table: Mutex<Table>,
 }
 
-fn address<T: LispContext>(form: &Arc<Vec<LispExp<T>>>) -> usize {
+fn address<T: LispContext>(form: &Arc<LispVec<T>>) -> usize {
     Arc::as_ptr(form) as *const () as usize
 }
 
 impl SourceMap {
     /// Associate `form` with `at`, replacing any location for that allocation.
     /// The map retains a weak reference and does not keep the form alive.
-    pub fn record<T: LispContext>(&self, form: &Arc<Vec<LispExp<T>>>, at: Location) {
+    pub fn record<T: LispContext>(&self, form: &Arc<LispVec<T>>, at: Location) {
         let weak = Arc::downgrade(form);
         let weak: Weak<dyn Send + Sync> = weak;
         let mut table = self
@@ -72,7 +72,7 @@ impl SourceMap {
     }
 
     /// Return a recorded location for this exact form allocation, if present.
-    pub fn locate<T: LispContext>(&self, form: &Arc<Vec<LispExp<T>>>) -> Option<Location> {
+    pub fn locate<T: LispContext>(&self, form: &Arc<LispVec<T>>) -> Option<Location> {
         let table = self
             .table
             .lock()

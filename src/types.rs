@@ -1,6 +1,8 @@
 //! Closure, continuation, and shared runtime types.
 
 use super::{Env, EvalError, LispContext, LispExp};
+use std::collections::HashMap;
+use std::ops::Deref;
 use std::sync::{Arc, RwLock};
 
 /// A runtime list cell whose tail may be another cell or any Lisp value.
@@ -16,27 +18,14 @@ pub struct ConsCell<T: LispContext> {
 /// either car or cdr. Shared cells remain owned by their other references.
 impl<T: LispContext> Drop for ConsCell<T> {
     fn drop(&mut self) {
-        let mut pending = Vec::new();
-
-        // Detach direct cons children before automatic field destruction.
-        for value in [&mut self.cdr, &mut self.car] {
-            if matches!(value, LispExp::Cons(_)) {
-                pending.push(std::mem::replace(value, LispExp::nil()));
-            }
+        if self.car.is_nil() && self.cdr.is_nil() {
+            return;
         }
 
-        while let Some(LispExp::Cons(cell)) = pending.pop() {
-            if let Ok(mut owned) = Arc::try_unwrap(cell) {
-                for value in [&mut owned.cdr, &mut owned.car] {
-                    if matches!(value, LispExp::Cons(_)) {
-                        pending.push(std::mem::replace(
-                            value,
-                            LispExp::nil(),
-                        ));
-                    }
-                }
-            }
-        }
+        drop_values(vec![
+            std::mem::replace(&mut self.cdr, LispExp::nil()),
+            std::mem::replace(&mut self.car, LispExp::nil()),
+        ]);
     }
 }
 
@@ -56,6 +45,71 @@ impl<T: LispContext> Iterator for ConsIter<T> {
             }
             _ => None,
         }
+    }
+}
+
+/// Vector storage with iterative destruction of nested data.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LispVec<T: LispContext>(pub Vec<LispExp<T>>);
+impl<T: LispContext> Deref for LispVec<T> {
+    type Target = Vec<LispExp<T>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// Drain owned data containers using an explicit work stack.
+pub(crate) fn drop_values<T: LispContext>(mut pending: Vec<LispExp<T>>) {
+    while let Some(value) = pending.pop() {
+        match value {
+            LispExp::Cons(cell) => {
+                if let Some(mut owned) = Arc::into_inner(cell) {
+                    pending.push(std::mem::replace(&mut owned.cdr, LispExp::nil()));
+                    pending.push(std::mem::replace(&mut owned.car, LispExp::nil()));
+                }
+            }
+
+            LispExp::Form(items) | LispExp::Vector(items) => {
+                if let Some(mut owned) = Arc::into_inner(items) {
+                    pending.append(&mut owned.0);
+                }
+            }
+
+            LispExp::Map(map) => {
+                if let Some(mut owned) = Arc::into_inner(map) {
+                    pending.extend(std::mem::take(&mut owned.0).into_values());
+                }
+            }
+
+            _ => {}
+        }
+    }
+}
+
+impl<T: LispContext> Drop for LispVec<T> {
+    fn drop(&mut self) {
+        drop_values(std::mem::take(&mut self.0));
+    }
+}
+
+/// Map storage with iterative destruction of nested data.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LispMap<T: LispContext>(pub HashMap<String, LispExp<T>>);
+
+impl<T: LispContext> Deref for LispMap<T> {
+    type Target = HashMap<String, LispExp<T>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: LispContext> Drop for LispMap<T> {
+    fn drop(&mut self) {
+        let values = std::mem::take(&mut self.0).into_values().collect();
+
+        drop_values(values);
     }
 }
 

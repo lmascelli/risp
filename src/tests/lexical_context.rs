@@ -212,14 +212,10 @@ mod tests {
         let child = Env::new_child(&root);
         let mut ctx = ();
 
-        let result =
-            eval_str("(setq fresh 42)", child.clone(), &mut ctx).unwrap();
+        let result = eval_str("(setq fresh 42)", child.clone(), &mut ctx).unwrap();
 
         assert_eq!(result, LispExp::number(42.0));
-        assert_eq!(
-            root.get_variable("fresh"),
-            Some(LispExp::number(42.0)),
-        );
+        assert_eq!(root.get_variable("fresh"), Some(LispExp::number(42.0)),);
         assert!(!child.variables.read().unwrap().contains_key("fresh"));
     }
 
@@ -237,10 +233,7 @@ mod tests {
 
         eval_str("(initialize-state)", root.clone(), &mut ctx).unwrap();
 
-        assert_eq!(
-            root.get_variable("fresh"),
-            Some(LispExp::number(42.0)),
-        );
+        assert_eq!(root.get_variable("fresh"), Some(LispExp::number(42.0)),);
     }
 
     #[test]
@@ -255,10 +248,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            root.get_variable("fresh"),
-            Some(LispExp::number(7.0)),
-        );
+        assert_eq!(root.get_variable("fresh"), Some(LispExp::number(7.0)),);
         assert_eq!(root.get_variable("local"), None);
     }
 
@@ -268,17 +258,9 @@ mod tests {
         root.set_variable("x".into(), LispExp::number(1.0));
         let mut ctx = ();
 
-        let result = eval_str(
-            "(let ((x 10)) (setq x 20) x)",
-            root.clone(),
-            &mut ctx,
-        )
-        .unwrap();
+        let result = eval_str("(let ((x 10)) (setq x 20) x)", root.clone(), &mut ctx).unwrap();
 
         assert_eq!(result, LispExp::number(20.0));
-        assert_eq!(
-            root.get_variable("x"),
-            Some(LispExp::number(1.0)),
-        );
+        assert_eq!(root.get_variable("x"), Some(LispExp::number(1.0)),);
     }
 }

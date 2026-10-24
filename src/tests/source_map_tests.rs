@@ -1,7 +1,7 @@
 //! Debug mode's reader: where each form was found.
 #[cfg(test)]
 mod tests {
-    use crate::{LispExp, Location, Parser, SourceMap};
+    use crate::{LispExp, LispVec, Location, Parser, SourceMap};
     use std::sync::Arc;
 
     fn read_located(text: &str, first_line: u32) -> (LispExp<()>, Arc<SourceMap>) {
@@ -20,7 +20,7 @@ mod tests {
         })
     }
 
-    fn form(exp: &LispExp<()>) -> &Arc<Vec<LispExp<()>>> {
+    fn form(exp: &LispExp<()>) -> &Arc<LispVec<()>> {
         match exp {
             LispExp::Form(form) => form,
             other => panic!("not a form: {other:?}"),

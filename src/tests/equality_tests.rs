@@ -33,39 +33,22 @@ mod tests {
 
     #[test]
     fn a_shared_child_does_not_hide_a_different_tail() {
-        let shared = LispExp::<()>::proper_list(vec![
-            LispExp::number(42.0),
-        ]);
+        let shared = LispExp::<()>::proper_list(vec![LispExp::number(42.0)]);
 
-        let left = LispExp::cons(
-            shared.clone(),
-            LispExp::number(1.0),
-        );
+        let left = LispExp::cons(shared.clone(), LispExp::number(1.0));
 
-        let right = LispExp::cons(
-            shared,
-            LispExp::number(2.0),
-        );
+        let right = LispExp::cons(shared, LispExp::number(2.0));
 
         assert!(left != right);
     }
 
     #[test]
     fn equality_checks_dotted_tails() {
-        let left = LispExp::<()>::cons(
-            LispExp::number(1.0),
-            LispExp::number(2.0),
-        );
+        let left = LispExp::<()>::cons(LispExp::number(1.0), LispExp::number(2.0));
 
-        let equal = LispExp::cons(
-            LispExp::number(1.0),
-            LispExp::number(2.0),
-        );
+        let equal = LispExp::cons(LispExp::number(1.0), LispExp::number(2.0));
 
-        let different = LispExp::cons(
-            LispExp::number(1.0),
-            LispExp::number(3.0),
-        );
+        let different = LispExp::cons(LispExp::number(1.0), LispExp::number(3.0));
 
         assert!(left == equal);
         assert!(left != different);
@@ -81,9 +64,7 @@ mod tests {
                 LispExp::proper_list(vec![LispExp::number(leaf)]),
             );
 
-            LispExp::form(vec![
-                LispExp::vec(vec![LispExp::map(map)]),
-            ])
+            LispExp::form(vec![LispExp::vec(vec![LispExp::map(map)])])
         }
 
         assert!(make_value(1.0) == make_value(1.0));
@@ -97,30 +78,21 @@ mod tests {
 
         assert!(short != long);
 
-        let left = LispExp::<()>::map(HashMap::from([
-            ("left".into(), LispExp::number(1.0)),
-        ]));
+        let left = LispExp::<()>::map(HashMap::from([("left".into(), LispExp::number(1.0))]));
 
-        let right = LispExp::map(HashMap::from([
-            ("right".into(), LispExp::number(1.0)),
-        ]));
+        let right = LispExp::map(HashMap::from([("right".into(), LispExp::number(1.0))]));
 
         assert!(left != right);
     }
 
     #[test]
     fn equality_preserves_nan_behavior() {
-        let vector = LispExp::<()>::vec(vec![
-            LispExp::number(f64::NAN),
-        ]);
+        let vector = LispExp::<()>::vec(vec![LispExp::number(f64::NAN)]);
 
         assert!(vector != vector.clone());
 
         // Existing cons equality recognizes the same allocation.
-        let cons = LispExp::<()>::cons(
-            LispExp::number(f64::NAN),
-            LispExp::nil(),
-        );
+        let cons = LispExp::<()>::cons(LispExp::number(f64::NAN), LispExp::nil());
 
         assert!(cons == cons.clone());
     }
