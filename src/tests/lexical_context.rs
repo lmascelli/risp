@@ -205,4 +205,80 @@ mod tests {
 
         assert_eq!(result, LispExp::number(42.0));
     }
+
+    #[test]
+    fn setq_creates_an_unbound_variable_in_root() {
+        let root = Env::<()>::new_root();
+        let child = Env::new_child(&root);
+        let mut ctx = ();
+
+        let result =
+            eval_str("(setq fresh 42)", child.clone(), &mut ctx).unwrap();
+
+        assert_eq!(result, LispExp::number(42.0));
+        assert_eq!(
+            root.get_variable("fresh"),
+            Some(LispExp::number(42.0)),
+        );
+        assert!(!child.variables.read().unwrap().contains_key("fresh"));
+    }
+
+    #[test]
+    fn setq_inside_function_preserves_a_new_global() {
+        let root = Env::<()>::new_root();
+        let mut ctx = ();
+
+        eval_str(
+            "(defun initialize-state () (setq fresh 42))",
+            root.clone(),
+            &mut ctx,
+        )
+        .unwrap();
+
+        eval_str("(initialize-state)", root.clone(), &mut ctx).unwrap();
+
+        assert_eq!(
+            root.get_variable("fresh"),
+            Some(LispExp::number(42.0)),
+        );
+    }
+
+    #[test]
+    fn setq_inside_let_preserves_a_new_global() {
+        let root = Env::<()>::new_root();
+        let mut ctx = ();
+
+        eval_str(
+            "(let ((local 7)) (setq fresh local))",
+            root.clone(),
+            &mut ctx,
+        )
+        .unwrap();
+
+        assert_eq!(
+            root.get_variable("fresh"),
+            Some(LispExp::number(7.0)),
+        );
+        assert_eq!(root.get_variable("local"), None);
+    }
+
+    #[test]
+    fn setq_updates_the_nearest_local_binding() {
+        let root = Env::<()>::new_root();
+        root.set_variable("x".into(), LispExp::number(1.0));
+        let mut ctx = ();
+
+        let result = eval_str(
+            "(let ((x 10)) (setq x 20) x)",
+            root.clone(),
+            &mut ctx,
+        )
+        .unwrap();
+
+        assert_eq!(result, LispExp::number(20.0));
+        assert_eq!(
+            root.get_variable("x"),
+            Some(LispExp::number(1.0)),
+        );
+    }
 }

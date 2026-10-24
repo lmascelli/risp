@@ -552,7 +552,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 } else {
                     value = eval(arg, env.clone(), ctx)?;
                     if !env.update_variable(&list_var_name, value.clone()) {
-                        env.set_variable(list_var_name.clone(), value.clone());
+                        env.set_root_variable(list_var_name.clone(), value.clone());
                     }
                     is_symbol = true;
                 }
