@@ -24,8 +24,9 @@ mod lexical_context;
 mod lisp_core_compliance_tests;
 mod nonlocal_exit_tests;
 mod parser_tests;
-#[cfg(test)]
+// #[cfg(test)]
 mod perf;
+mod printing_tests;
 mod source_map_tests;
 mod symbol_tests;
 mod thread_tests;

@@ -177,114 +177,170 @@ impl<T: LispContext> PartialEq for LispExp<T> {
     }
 }
 
-/// Format values in Lisp notation. Runtime-only values use opaque `#<...>` forms.
+/// Format values without recursively traversing compound values.
+/// Runtime-only values retain their opaque representations.
 impl<T: LispContext> std::fmt::Debug for LispExp<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LispExp::Form(items) => {
-                write!(f, "(")?;
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " ")?;
-                    }
-                    write!(f, "{:?}", item)?;
-                }
-                write!(f, ")")
-            }
-
-            LispExp::Cons(_) => {
-                let (items, tail) = self.split_list();
-                write!(f, "(")?;
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " ")?;
-                    }
-                    write!(f, "{:?}", item)?;
-                }
-                if !tail.is_nil() {
-                    write!(f, " . {:?}", tail)?;
-                }
-                write!(f, ")")
-            }
-
-            LispExp::Vector(items) => {
-                write!(f, "[")?;
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " ")?;
-                    }
-                    write!(f, "{:?}", item)?;
-                }
-                write!(f, "]")
-            }
-
-            LispExp::Map(map) => {
-                write!(f, "{{")?;
-                for (i, (key, value)) in map.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " ")?;
-                    }
-                    write!(f, "{} {:?}", key, value)?;
-                }
-                write!(f, "}}")
-            }
-
-            // Restrict the integer cast to a conservative range; format larger values directly.
-            LispExp::Number(n) => {
-                if n.is_finite() && n.fract() == 0.0 && n.abs() < 1e15 {
-                    write!(f, "{}", *n as i64)
-                } else {
-                    write!(f, "{}", n)
-                }
-            }
-
-            LispExp::Symbol(s) => write!(f, "{}", s),
-
-            LispExp::String(s) => write!(f, "{:?}", s.as_str()),
-
-            LispExp::Lambda(lambda) => {
-                write!(f, "#<lambda (")?;
-                let mut first = true;
-                for param in &lambda.params {
-                    if !first {
-                        write!(f, " ")?;
-                    }
-                    first = false;
-                    write!(f, "{}", param)?;
-                }
-                if !lambda.optionals.is_empty() {
-                    if !first {
-                        write!(f, " ")?;
-                    }
-                    first = false;
-                    write!(f, "&optional")?;
-                    for param in &lambda.optionals {
-                        write!(f, " {}", param)?;
-                    }
-                }
-                if let Some(rest) = &lambda.rest {
-                    if !first {
-                        write!(f, " ")?;
-                    }
-                    write!(f, "&rest {}", rest)?;
-                }
-                write!(f, ")>")
-            }
-
-            LispExp::Primitive { .. } => write!(f, "#<primitive>"),
-
-            // Do not lock or traverse atoms: they may contain themselves,
-            // or a writer may be formatting its own locked value.
-            LispExp::Atom(_) => write!(f, "#<atom>"),
-
-            LispExp::Fiber(fiber) => match fiber.0.try_read() {
-                Ok(state) if state.is_done => write!(f, "#<fiber done>"),
-                Ok(_) => write!(f, "#<fiber>"),
-                Err(_) => write!(f, "#<fiber running>"),
-            },
-
-            LispExp::ThreadHandle(t) => write!(f, "#t<thread-handle>"),
+        enum Task<'a, C: LispContext> {
+            Value(&'a LispExp<C>),
+            Text(&'static str),
+            Tail(&'a LispExp<C>),
+            Sequence(std::slice::Iter<'a, LispExp<C>>, bool),
+            MapEntries(
+                std::collections::hash_map::Iter<
+                    'a,
+                    String,
+                    LispExp<C>,
+                >,
+                bool,
+            ),
         }
+
+        let mut pending = vec![Task::Value(self)];
+
+        while let Some(task) = pending.pop() {
+            match task {
+                Task::Text(text) => f.write_str(text)?,
+
+                Task::Sequence(mut items, first) => {
+                    if let Some(item) = items.next() {
+                        if !first {
+                            f.write_str(" ")?;
+                        }
+
+                        pending.push(Task::Sequence(items, false));
+                        pending.push(Task::Value(item));
+                    }
+                }
+
+                Task::MapEntries(mut entries, first) => {
+                    if let Some((key, value)) = entries.next() {
+                        if !first {
+                            f.write_str(" ")?;
+                        }
+
+                        write!(f, "{} ", key)?;
+
+                        pending.push(Task::MapEntries(entries, false));
+                        pending.push(Task::Value(value));
+                    }
+                }
+
+                Task::Tail(value) => match value {
+                    LispExp::Cons(cell) => {
+                        f.write_str(" ")?;
+                        pending.push(Task::Tail(&cell.cdr));
+                        pending.push(Task::Value(&cell.car));
+                    }
+                    other if !other.is_nil() => {
+                        f.write_str(" . ")?;
+                        pending.push(Task::Value(other));
+                    }
+                    _ => {}
+                },
+
+                Task::Value(value) => match value {
+                    LispExp::Form(items) => {
+                        f.write_str("(")?;
+                        pending.push(Task::Text(")"));
+                        pending.push(Task::Sequence(items.iter(), true));
+                    }
+
+                    LispExp::Cons(cell) => {
+                        f.write_str("(")?;
+                        pending.push(Task::Text(")"));
+                        pending.push(Task::Tail(&cell.cdr));
+                        pending.push(Task::Value(&cell.car));
+                    }
+
+                    LispExp::Vector(items) => {
+                        f.write_str("[")?;
+                        pending.push(Task::Text("]"));
+                        pending.push(Task::Sequence(items.iter(), true));
+                    }
+
+                    LispExp::Map(map) => {
+                        f.write_str("{")?;
+                        pending.push(Task::Text("}"));
+                        pending.push(Task::MapEntries(map.iter(), true));
+                    }
+
+                    LispExp::Number(n) => {
+                        if n.is_finite()
+                            && n.fract() == 0.0
+                            && n.abs() < 1e15
+                        {
+                            write!(f, "{}", *n as i64)?;
+                        } else {
+                            write!(f, "{}", n)?;
+                        }
+                    }
+
+                    LispExp::Symbol(s) => write!(f, "{}", s)?,
+
+                    LispExp::String(s) => {
+                        write!(f, "{:?}", s.as_str())?;
+                    }
+
+                    LispExp::Lambda(lambda) => {
+                        f.write_str("#<lambda (")?;
+                        let mut first = true;
+
+                        for param in &lambda.params {
+                            if !first {
+                                f.write_str(" ")?;
+                            }
+                            first = false;
+                            write!(f, "{}", param)?;
+                        }
+
+                        if !lambda.optionals.is_empty() {
+                            if !first {
+                                f.write_str(" ")?;
+                            }
+                            first = false;
+
+                            f.write_str("&optional")?;
+                            for param in &lambda.optionals {
+                                write!(f, " {}", param)?;
+                            }
+                        }
+
+                        if let Some(rest) = &lambda.rest {
+                            if !first {
+                                f.write_str(" ")?;
+                            }
+                            write!(f, "&rest {}", rest)?;
+                        }
+
+                        f.write_str(")>")?;
+                    }
+
+                    LispExp::Primitive { .. } => {
+                        f.write_str("#<primitive>")?;
+                    }
+
+                    // Atoms may contain themselves or be locked by the caller.
+                    LispExp::Atom(_) => f.write_str("#<atom>")?,
+
+                    LispExp::Fiber(fiber) => {
+                        match fiber.0.try_read() {
+                            Ok(state) if state.is_done => {
+                                f.write_str("#<fiber done>")?;
+                            }
+                            Ok(_) => f.write_str("#<fiber>")?,
+                            Err(_) => f.write_str("#<fiber running>")?,
+                        }
+                    }
+
+                    LispExp::ThreadHandle(_) => {
+                        f.write_str("#t<thread-handle>")?;
+                    }
+                },
+            }
+        }
+
+        Ok(())
     }
 }
 
