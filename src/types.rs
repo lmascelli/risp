@@ -12,15 +12,29 @@ pub struct ConsCell<T: LispContext> {
     pub cdr: LispExp<T>,
 }
 
-/// Unlink uniquely owned cons tails iteratively to avoid recursive stack overflow.
-/// Stop at a shared cell: its remaining owners still need the tail.
+/// Release uniquely owned cons cells without recursively following
+/// either car or cdr. Shared cells remain owned by their other references.
 impl<T: LispContext> Drop for ConsCell<T> {
     fn drop(&mut self) {
-        let mut next = std::mem::replace(&mut self.cdr, LispExp::nil());
-        while let LispExp::Cons(cell) = next {
-            match Arc::try_unwrap(cell) {
-                Ok(mut owned) => next = std::mem::replace(&mut owned.cdr, LispExp::nil()),
-                Err(_) => break,
+        let mut pending = Vec::new();
+
+        // Detach direct cons children before automatic field destruction.
+        for value in [&mut self.cdr, &mut self.car] {
+            if matches!(value, LispExp::Cons(_)) {
+                pending.push(std::mem::replace(value, LispExp::nil()));
+            }
+        }
+
+        while let Some(LispExp::Cons(cell)) = pending.pop() {
+            if let Ok(mut owned) = Arc::try_unwrap(cell) {
+                for value in [&mut owned.cdr, &mut owned.car] {
+                    if matches!(value, LispExp::Cons(_)) {
+                        pending.push(std::mem::replace(
+                            value,
+                            LispExp::nil(),
+                        ));
+                    }
+                }
             }
         }
     }
