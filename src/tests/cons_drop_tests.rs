@@ -1,5 +1,8 @@
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::LispExp;
+
     fn on_small_stack(body: impl FnOnce() + Send + 'static) {
         std::thread::Builder::new()
             .stack_size(2 * 1024 * 1024)
