@@ -118,14 +118,16 @@ fn drain<T: LispContext>(mut current: Cursor<T>) {
 
         if let Some(child) = child {
             if child.has_remaining() {
-                if first_parent.is_none() {
-                    first_parent = Some(current);
-                } else {
-                    more_parents.push(current);
+                if current.has_remaining() {
+                    if first_parent.is_none() {
+                        first_parent = Some(current);
+                    } else {
+                        more_parents.push(current);
+                    }
                 }
-            }
-            // Replacing an exhausted cursor releases its original buffer.
+                // Replacing an exhausted cursor releases its original buffer.
             current = child;
+            }
         }
     }
 }
