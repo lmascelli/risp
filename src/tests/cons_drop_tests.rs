@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::LispExp;
 
     fn on_small_stack(body: impl FnOnce() + Send + 'static) {

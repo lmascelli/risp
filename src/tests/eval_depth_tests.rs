@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod test {
-    use crate::{Env, EvalError, LispContext, LispExp, Parser, eval, setup_base_env};
+    use crate::{Env, EvalError, LispExp, Parser, eval, setup_base_env};
 
     fn eval_script(source: &str) -> Result<LispExp<()>, EvalError<()>> {
         let env = Env::new_root();

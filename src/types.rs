@@ -247,7 +247,7 @@ pub struct SharedFiber<T: LispContext>(pub Arc<RwLock<FiberState<T>>>);
 
 impl<T: LispContext> PartialEq for SharedFiber<T> {
     fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self, other)
+        Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
