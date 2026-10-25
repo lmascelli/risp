@@ -214,3 +214,23 @@ pub(super) fn condition_matches<T: LispContext>(
         _ => false,
     }
 }
+
+/// Only these variants participate in this structural drain. Runtime-owned
+/// objects (atoms, closures, environments and continuations) keep their own
+/// lifetime behavior.
+pub(crate) fn is_container<T: LispContext>(value: &LispExp<T>) -> bool {
+    matches!(
+        value,
+        LispExp::Cons(_) | LispExp::Form(_) | LispExp::Vector(_) | LispExp::Map(_)
+    )
+}
+
+/// Detach a structural child without interning or changing nil's refcount.
+/// Other fields stay in place and are released by normal field destruction.
+pub(crate) fn take_container<T: LispContext>(value: &mut LispExp<T>) -> Option<LispExp<T>> {
+    if is_container(value) {
+        Some(std::mem::replace(value, LispExp::Number(0.0)))
+    } else {
+        None
+    }
+}

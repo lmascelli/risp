@@ -59,8 +59,8 @@ use types::{
 };
 pub use types::{Frame, Lambda, LispPrimitive};
 use utils::{
-    bind_lambda_args, condition_matches, data_to_form, error_data, error_symbol,
-    parse_lambda_params,
+    bind_lambda_args, condition_matches, data_to_form, error_data, error_symbol, is_container,
+    parse_lambda_params, take_container,
 };
 pub use utils::{exact_arity, some_arguments};
 

@@ -2,7 +2,7 @@
 //!
 //! Each entry keeps a weak reference to prevent address reuse while indexed,
 //! without retaining the form itself. Dead entries are swept during recording.
-use super::{LispContext, LispExp, LispVec};
+use super::{LispContext, LispVec};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex, Weak};

@@ -10,25 +10,16 @@ mod tests {
                 let mut value = LispExp::<()>::number(1.0);
 
                 for i in 0..100_000 {
-                    let container = if kind == 3 {
-                        i % 4
-                    } else {
-                        kind
-                    };
+                    let container = if kind == 3 { i % 4 } else { kind };
 
                     value = match container {
                         0 => LispExp::vec(vec![value]),
 
                         1 => LispExp::form(vec![value]),
 
-                        2 => LispExp::map(HashMap::from([
-                            ("child".into(), value),
-                        ])),
+                        2 => LispExp::map(HashMap::from([("child".into(), value)])),
 
-                        _ => LispExp::cons(
-                            value,
-                            LispExp::nil(),
-                        ),
+                        _ => LispExp::cons(value, LispExp::nil()),
                     };
                 }
 
@@ -61,9 +52,7 @@ mod tests {
 
     #[test]
     fn dropping_a_container_preserves_shared_children() {
-        let child = LispExp::<()>::vec(vec![
-            LispExp::number(42.0),
-        ]);
+        let child = LispExp::<()>::vec(vec![LispExp::number(42.0)]);
 
         let parent = LispExp::map(HashMap::from([
             ("first".into(), child.clone()),

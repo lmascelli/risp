@@ -1,9 +1,9 @@
 //! Expression evaluation, tail calls, and resumable statement continuations.
 
 use super::{
-    Env, EvalError, FiberState, Frame, Lambda, LispContext, LispExp, LispVec, VARIABLE_DOCUMENTATION,
-    bind_lambda_args, condition_matches, data_to_form, error_data, error_symbol,
-    parse_lambda_params,
+    Env, EvalError, FiberState, Frame, Lambda, LispContext, LispExp, LispVec,
+    VARIABLE_DOCUMENTATION, bind_lambda_args, condition_matches, data_to_form, error_data,
+    error_symbol, parse_lambda_params,
 };
 use std::{cell::Cell, collections::HashMap, sync::Arc};
 

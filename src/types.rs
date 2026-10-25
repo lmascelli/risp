@@ -1,7 +1,8 @@
 //! Closure, continuation, and shared runtime types.
 
-use super::{Env, EvalError, LispContext, LispExp};
-use std::collections::HashMap;
+use super::{Env, EvalError, LispContext, LispExp, is_container, take_container};
+use std::collections::{HashMap, hash_map};
+use std::vec;
 use std::ops::Deref;
 use std::sync::{Arc, RwLock};
 
@@ -14,18 +15,10 @@ pub struct ConsCell<T: LispContext> {
     pub cdr: LispExp<T>,
 }
 
-/// Release uniquely owned cons cells without recursively following
-/// either car or cdr. Shared cells remain owned by their other references.
+/// Release structural children without recursive traversal or a per-cell buffer.
 impl<T: LispContext> Drop for ConsCell<T> {
     fn drop(&mut self) {
-        if self.car.is_nil() && self.cdr.is_nil() {
-            return;
-        }
-
-        drop_values(vec![
-            std::mem::replace(&mut self.cdr, LispExp::nil()),
-            std::mem::replace(&mut self.car, LispExp::nil()),
-        ]);
+        drop_cons(self);
     }
 }
 
@@ -59,37 +52,97 @@ impl<T: LispContext> Deref for LispVec<T> {
     }
 }
 
-/// Drain owned data containers using an explicit work stack.
-pub(crate) fn drop_values<T: LispContext>(mut pending: Vec<LispExp<T>>) {
-    while let Some(value) = pending.pop() {
-        match value {
-            LispExp::Cons(cell) => {
-                if let Some(mut owned) = Arc::into_inner(cell) {
-                    pending.push(std::mem::replace(&mut owned.cdr, LispExp::nil()));
-                    pending.push(std::mem::replace(&mut owned.car, LispExp::nil()));
-                }
-            }
+/// An owned traversal position. Iterators retain their existing allocations;
+/// no second buffer is created for vector elements or map values.
+enum Cursor<T: LispContext> {
+    Pair(Option<LispExp<T>>, Option<LispExp<T>>),
+    Values(vec::IntoIter<LispExp<T>>),
+    Entries(hash_map::IntoValues<String, LispExp<T>>),
+}
 
-            LispExp::Form(items) | LispExp::Vector(items) => {
-                if let Some(mut owned) = Arc::into_inner(items) {
-                    pending.append(&mut owned.0);
-                }
-            }
-
-            LispExp::Map(map) => {
-                if let Some(mut owned) = Arc::into_inner(map) {
-                    pending.extend(std::mem::take(&mut owned.0).into_values());
-                }
-            }
-
-            _ => {}
+impl<T: LispContext> Cursor<T> {
+    fn has_remaining(&self) -> bool {
+        match self {
+            Self::Pair(car, cdr) => car.is_some() || cdr.is_some(),
+            Self::Values(values) => values.len() != 0,
+            Self::Entries(values) => values.len() != 0,
         }
+    }
+
+    /// Release nonstructural values directly; return only a structural child.
+    fn next_container(&mut self) -> Option<LispExp<T>> {
+        loop {
+            let value = match self {
+                Self::Pair(car, cdr) => car.take().or_else(|| cdr.take()),
+                Self::Values(values) => values.next(),
+                Self::Entries(values) => values.next(),
+            }?;
+            if is_container(&value) {
+                return Some(value);
+            }
+            drop(value);
+        }
+    }
+}
+
+fn drain<T: LispContext>(mut current: Cursor<T>) {
+    // One unfinished parent fits inline. Allocate only for deeper branching.
+    // Simple chains, flat containers and shallow branching need no work buffer.
+    let mut first_parent = None;
+    let mut more_parents = Vec::new();
+    loop {
+        let Some(value) = current.next_container() else {
+            match more_parents.pop().or_else(|| first_parent.take()) {
+                Some(parent) => {
+                    current = parent;
+                    continue;
+                }
+                None => return,
+            }
+        };
+
+        let child = match value {
+            LispExp::Cons(cell) => Arc::into_inner(cell).map(|mut owned| {
+                // The emptied cell's own Drop sees no structural children.
+                Cursor::Pair(
+                    take_container(&mut owned.car),
+                    take_container(&mut owned.cdr),
+                )
+            }),
+            LispExp::Form(items) | LispExp::Vector(items) => Arc::into_inner(items)
+                .map(|mut owned| Cursor::Values(std::mem::take(&mut owned.0).into_iter())),
+            LispExp::Map(map) => Arc::into_inner(map)
+                .map(|mut owned| Cursor::Entries(std::mem::take(&mut owned.0).into_values())),
+            _ => None,
+        };
+
+        if let Some(child) = child {
+            if child.has_remaining() {
+                if first_parent.is_none() {
+                    first_parent = Some(current);
+                } else {
+                    more_parents.push(current);
+                }
+            }
+            // Replacing an exhausted cursor releases its original buffer.
+            current = child;
+        }
+    }
+}
+
+fn drop_cons<T: LispContext>(cell: &mut ConsCell<T>) {
+    let car = take_container(&mut cell.car);
+    let cdr = take_container(&mut cell.cdr);
+    if car.is_some() || cdr.is_some() {
+        drain(Cursor::Pair(car, cdr));
     }
 }
 
 impl<T: LispContext> Drop for LispVec<T> {
     fn drop(&mut self) {
-        drop_values(std::mem::take(&mut self.0));
+        if !self.0.is_empty() {
+            drain(Cursor::Values(std::mem::take(&mut self.0).into_iter()));
+        }
     }
 }
 
@@ -107,9 +160,9 @@ impl<T: LispContext> Deref for LispMap<T> {
 
 impl<T: LispContext> Drop for LispMap<T> {
     fn drop(&mut self) {
-        let values = std::mem::take(&mut self.0).into_values().collect();
-
-        drop_values(values);
+        if !self.0.is_empty() {
+            drain(Cursor::Entries(std::mem::take(&mut self.0).into_values()));
+        }
     }
 }
 
