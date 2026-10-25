@@ -19,13 +19,32 @@ fn primitive_eq_impl<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, 
         (LispExp::Vector(a), LispExp::Vector(b)) => Arc::ptr_eq(a, b),
         (LispExp::Map(a), LispExp::Map(b)) => Arc::ptr_eq(a, b),
         (LispExp::String(a), LispExp::String(b)) => Arc::ptr_eq(a, b),
-        _ => false,
+        (LispExp::Lambda(a), LispExp::Lambda(b)) => {
+            Arc::ptr_eq(a, b)
+        }
+        (LispExp::Atom(a), LispExp::Atom(b)) => {
+            Arc::ptr_eq(&a.0, &b.0)
+        }
+        (LispExp::Fiber(a), LispExp::Fiber(b)) => {
+            Arc::ptr_eq(&a.0, &b.0)
+        }
+        (LispExp::ThreadHandle(a), LispExp::ThreadHandle(b)) => {
+            Arc::ptr_eq(&a.0, &b.0)
+        }
+        (
+            LispExp::Primitive { pointer: a, .. },
+            LispExp::Primitive { pointer: b, .. },
+        ) => {
+            std::ptr::fn_addr_eq(*a, *b)
+        }
+        _ => false
     };
     Ok(LispExp::boolean(is_eq))
 }
 
 const EQ_DOC: &str = "(eq A B): Return t if A and B are the same object, nil otherwise.\n\n\
-                 A number, a symbol and nil are compared by value; everything else is compared by \
+                 A number, a symbol and nil are compared by value; Native primitives compare \
+                 by their implementation function address. everything else is compared by \
                  identity, so two lists with the same elements are not `eq' unless they are the \
                  same list. Sharing a tail is not enough either. `equal' is the structural \
                  comparison.\n\n\
