@@ -2,9 +2,9 @@
 
 use super::{Env, EvalError, LispContext, LispExp, is_container, take_container};
 use std::collections::{HashMap, hash_map};
-use std::vec;
 use std::ops::Deref;
 use std::sync::{Arc, RwLock};
+use std::vec;
 
 /// A runtime list cell whose tail may be another cell or any Lisp value.
 #[derive(Clone, Debug, PartialEq)]
@@ -126,7 +126,7 @@ fn drain<T: LispContext>(mut current: Cursor<T>) {
                     }
                 }
                 // Replacing an exhausted cursor releases its original buffer.
-            current = child;
+                current = child;
             }
         }
     }
@@ -231,14 +231,20 @@ impl<T: LispContext> PartialEq for Frame<T> {
     }
 }
 
-/// A fiber's remaining continuation and completion state.
+/// Execution state of a cooperative fiber.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FiberStatus {
+    Suspended,
+    Running,
+    Done,
+}
+
+/// A fiber's stored continuation and execution state.
 #[derive(Debug)]
 pub struct FiberState<T: LispContext> {
-    /// Innermost frame first. An empty stack can also mean the fiber is
-    /// currently running; consult `is_done` for completion.
+    /// Innermost frame first. The active resumer owns these frames while Running.
     pub pending: Vec<Frame<T>>,
-    /// Whether the fiber has completed or terminated after an error.
-    pub is_done: bool,
+    pub status: FiberStatus,
 }
 
 /// Shared fiber state protected by a read/write lock.

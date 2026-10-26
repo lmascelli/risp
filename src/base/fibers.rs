@@ -3,6 +3,7 @@ use super::*;
 
 const RESUME_DOC: &str = "(resume FIBER): Carry FIBER on from wherever it stopped, and return \
                  the value it stopped with. Returns nil once FIBER has nothing left to run.\n\n\
+                 If FIBER is already running, returns nil without changing its state.\n\n\
                  A fiber runs until it reaches a `yield\' or until its body is finished, \
                  whichever comes first. A `yield\' stops it *inside* a form, and the next \
                  `resume\' picks up at that exact spot with its variables as it left them.\n\n\
@@ -16,6 +17,32 @@ const RESUME_DOC: &str = "(resume FIBER): Carry FIBER on from wherever it stoppe
                  (resume f) ; logs \"a\", => 1\n\
                  (resume f) ; logs \"b\", => 2\n\
                  (resume f) => nil ; fiber is done";
+
+/// Retire a claimed continuation if evaluation unwinds through a Rust panic
+/// or exits before its normal state transition has been published.
+struct RunningFiber<'a, T: LispContext> {
+    fiber: &'a crate::SharedFiber<T>,
+    finished: bool,
+}
+
+impl<T: LispContext> Drop for RunningFiber<'_, T> {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        let pending = {
+            let mut state = self
+                .fiber
+                .0
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.status = crate::FiberStatus::Done;
+            std::mem::take(&mut state.pending)
+        };
+        // Release values after releasing the state lock.
+        drop(pending);
+    }
+}
 
 fn primitive_resume<T: LispContext>(
     args: &[LispExp<T>],
@@ -35,49 +62,50 @@ fn primitive_resume<T: LispContext>(
         };
     };
 
-    // Release the lock before evaluating Lisp to allow access to the running fiber.
-    // Taking the continuation also prevents concurrent resumes from running it twice.
     let frames = {
         let mut fiber = shared_fiber
             .0
             .write()
             .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
-        if fiber.is_done {
-            return Ok(LispExp::nil());
+        match fiber.status {
+            crate::FiberStatus::Done | crate::FiberStatus::Running => {
+                return Ok(LispExp::nil());
+            }
+            crate::FiberStatus::Suspended => {
+                fiber.status = crate::FiberStatus::Running;
+                std::mem::take(&mut fiber.pending)
+            }
         }
-        std::mem::take(&mut fiber.pending)
     };
-    if frames.is_empty() {
-        let mut fiber = shared_fiber
-            .0
-            .write()
-            .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
-        fiber.is_done = true;
-        return Ok(LispExp::nil());
-    }
 
+    // Keep no state lock while running Lisp: reentry may inspect this fiber.
+    let mut running = RunningFiber {
+        fiber: shared_fiber,
+        finished: false,
+    };
     let outcome = resume_frames(frames, ctx);
 
     let mut fiber = shared_fiber
         .0
         .write()
         .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
-    match outcome {
+    let result = match outcome {
         Err(EvalError::Yielded { value, frames }) => {
             fiber.pending = frames;
+            fiber.status = crate::FiberStatus::Suspended;
             Ok(value)
         }
         Ok(value) => {
-            fiber.is_done = true;
+            fiber.status = crate::FiberStatus::Done;
             Ok(value)
         }
         Err(other) => {
-            // An error destroys the continuation; retire the fiber to prevent replay.
-            fiber.is_done = true;
-            fiber.pending.clear();
+            fiber.status = crate::FiberStatus::Done;
             Err(other)
         }
-    }
+    };
+    running.finished = true;
+    result
 }
 
 const FIBER_DONE_P_DOC: &str = "(fiber-done-p FIBER): t when FIBER has nothing left to run, nil \

@@ -519,7 +519,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
             if args.is_empty() {
                 return Ok(EvalStep::Done(LispExp::fiber(FiberState {
                     pending: Vec::new(),
-                    is_done: true,
+                    status: crate::FiberStatus::Done,
                 })));
             }
             // Capture the starting position and lexical environment in the same frame.
@@ -529,7 +529,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                     from: 0,
                     env: Env::new_child(&env),
                 }],
-                is_done: false,
+                status: crate::FiberStatus::Suspended,
             })))
         }
 

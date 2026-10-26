@@ -314,8 +314,11 @@ impl<T: LispContext> std::fmt::Debug for LispExp<T> {
                     LispExp::Atom(_) => f.write_str("#<atom>")?,
 
                     LispExp::Fiber(fiber) => match fiber.0.try_read() {
-                        Ok(state) if state.is_done => {
+                        Ok(state) if state.status == crate::FiberStatus::Done => {
                             f.write_str("#<fiber done>")?;
+                        }
+                        Ok(state) if state.status == crate::FiberStatus::Running => {
+                            f.write_str("#<fiber running>")?;
                         }
                         Ok(_) => f.write_str("#<fiber>")?,
                         Err(_) => f.write_str("#<fiber running>")?,
@@ -358,9 +361,13 @@ impl<T: LispContext> LispExp<T> {
     /// A poisoned state lock is treated as finished.
     pub fn fiber_is_done(&self) -> Option<bool> {
         match self {
-            LispExp::Fiber(fiber) => {
-                Some(fiber.0.read().map(|state| state.is_done).unwrap_or(true))
-            }
+            LispExp::Fiber(fiber) => Some(
+                fiber
+                    .0
+                    .read()
+                    .map(|state| state.status == crate::FiberStatus::Done)
+                    .unwrap_or(true),
+            ),
             _ => None,
         }
     }
