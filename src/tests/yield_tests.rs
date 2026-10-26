@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn a_yield_inside_a_condition_case_is_refused() {
         let (env, ctx) = setup();
-    
+
         run(
             r#"(setq f
                   (fiber
@@ -319,17 +319,15 @@ mod tests {
             &env,
             &ctx,
         );
-    
+
         assert_eq!(
             try_run("(resume f)", &env, &ctx).unwrap_err(),
             EvalError::YieldNotAllowed,
         );
-    
+
         assert!(ctx.lines().is_empty());
-    
-        assert!(
-            run("(fiber-done-p f)", &env, &ctx).is_truthy()
-        );
+
+        assert!(run("(fiber-done-p f)", &env, &ctx).is_truthy());
     }
 
     #[test]

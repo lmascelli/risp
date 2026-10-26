@@ -302,7 +302,7 @@ fn eval_step_permitted<T: LispContext>(
         | LispExp::Lambda(_)
         | LispExp::ThreadHandle(_) => Ok(EvalStep::Done(exp.clone())),
 
-        LispExp::Primitive { pointer: _, doc: _ } => Ok(EvalStep::Done(exp.clone())),
+        LispExp::Primitive { .. } | LispExp::Native { .. } => Ok(EvalStep::Done(exp.clone())),
 
         LispExp::Symbol(symbol) => {
             if symbol.as_str() == "nil" || symbol.as_str() == "t" || symbol.starts_with(':') {
@@ -353,6 +353,22 @@ fn eval_step_permitted<T: LispContext>(
                         pop_unless_failed(ctx, &step);
                         return step;
                     }
+
+                    LispExp::Native { callback, .. } => {
+                        let mut evaled_args = Vec::with_capacity(list.len() - 1);
+
+                        for arg in &list[1..] {
+                            evaled_args.push(eval(arg, env.clone(), ctx)?);
+                        }
+
+                        ctx.push_call_frame("<native>");
+
+                        let result = callback(&evaled_args, env.clone(), ctx)?;
+
+                        ctx.pop_call_frame();
+                        Ok(EvalStep::Done(result))
+                    }
+
                     _ => {
                         return Err(EvalError::UnvalidFunctionCall);
                     }
@@ -1030,7 +1046,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
 
                 // No continuation can resume this unsupported suspension.
                 Err(err @ EvalError::YieldNotAllowed) => return Err(err),
-                
+
                 Err(err) => err,
             };
 
@@ -1234,6 +1250,10 @@ fn eval_function_call_step<T: LispContext>(
             step
         } else if let LispExp::Primitive { pointer, doc: _ } = func {
             let result = pointer(&evaled_args[..], env.clone(), ctx)?;
+            ctx.pop_call_frame();
+            Ok(EvalStep::Done(result))
+        } else if let LispExp::Native { callback, .. } = func {
+            let result = callback(&evaled_args, env.clone(), ctx)?;
             ctx.pop_call_frame();
             Ok(EvalStep::Done(result))
         } else {

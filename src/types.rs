@@ -311,3 +311,12 @@ pub struct SharedThreadHandle<T: LispContext>(
 /// ```
 ///
 pub type LispPrimitive<T> = fn(&[LispExp<T>], Arc<Env<T>>, &T) -> Result<LispExp<T>, EvalError<T>>;
+
+/// A host callable that can capture owned state.
+///
+/// Captured state must be safe to share between evaluation threads.
+/// This Rust interface is not a C ABI.
+pub type LispNative<T> = dyn Fn(&[LispExp<T>], Arc<Env<T>>, &T) -> Result<LispExp<T>, EvalError<T>>
+    + Send
+    + Sync
+    + 'static;

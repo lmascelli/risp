@@ -230,6 +230,7 @@ pub fn call_callable<T: LispContext>(
             )
         }
         LispExp::Primitive { pointer: f, doc: _ } => f(call_args, env, ctx),
+        LispExp::Native { callback, .. } => callback(call_args, env, ctx),
         LispExp::Symbol(name) => {
             if let Some(resolved) = env.get_function(name) {
                 call_callable(&resolved, call_args, env, ctx)

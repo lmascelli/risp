@@ -19,25 +19,17 @@ fn primitive_eq_impl<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, 
         (LispExp::Vector(a), LispExp::Vector(b)) => Arc::ptr_eq(a, b),
         (LispExp::Map(a), LispExp::Map(b)) => Arc::ptr_eq(a, b),
         (LispExp::String(a), LispExp::String(b)) => Arc::ptr_eq(a, b),
-        (LispExp::Lambda(a), LispExp::Lambda(b)) => {
-            Arc::ptr_eq(a, b)
-        }
-        (LispExp::Atom(a), LispExp::Atom(b)) => {
-            Arc::ptr_eq(&a.0, &b.0)
-        }
-        (LispExp::Fiber(a), LispExp::Fiber(b)) => {
-            Arc::ptr_eq(&a.0, &b.0)
-        }
-        (LispExp::ThreadHandle(a), LispExp::ThreadHandle(b)) => {
-            Arc::ptr_eq(&a.0, &b.0)
-        }
-        (
-            LispExp::Primitive { pointer: a, .. },
-            LispExp::Primitive { pointer: b, .. },
-        ) => {
+        (LispExp::Lambda(a), LispExp::Lambda(b)) => Arc::ptr_eq(a, b),
+        (LispExp::Atom(a), LispExp::Atom(b)) => Arc::ptr_eq(&a.0, &b.0),
+        (LispExp::Fiber(a), LispExp::Fiber(b)) => Arc::ptr_eq(&a.0, &b.0),
+        (LispExp::ThreadHandle(a), LispExp::ThreadHandle(b)) => Arc::ptr_eq(&a.0, &b.0),
+        (LispExp::Primitive { pointer: a, .. }, LispExp::Primitive { pointer: b, .. }) => {
             std::ptr::fn_addr_eq(*a, *b)
         }
-        _ => false
+        (LispExp::Native { callback: a, .. }, LispExp::Native { callback: b, .. }) => {
+            Arc::ptr_eq(a, b)
+        }
+        _ => false,
     };
     Ok(LispExp::boolean(is_eq))
 }
@@ -186,7 +178,7 @@ fn primitive_functionp<T: LispContext>(
 ) -> Result<LispExp<T>, EvalError<T>> {
     exact_arity(args, 1)?;
     let is_function = match &args[0] {
-        LispExp::Lambda(_) | LispExp::Primitive { .. } => true,
+        LispExp::Lambda(_) | LispExp::Primitive { .. } | LispExp::Native { .. } => true,
         LispExp::Symbol(name) => env.get_function(name).is_some(),
         _ => false,
     };

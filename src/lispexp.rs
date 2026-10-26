@@ -1,8 +1,8 @@
 //! Lisp values, syntax forms, symbol interning, equality, and printing.
 
 use super::{
-    ConsCell, ConsIter, FiberState, Lambda, LispContext, LispMap, LispPrimitive, LispVec,
-    SharedAtom, SharedFiber, SharedThreadHandle,
+    ConsCell, ConsIter, Env, EvalError, FiberState, Lambda, LispContext, LispMap, LispNative,
+    LispPrimitive, LispVec, SharedAtom, SharedFiber, SharedThreadHandle,
 };
 use std::{
     borrow::Cow,
@@ -76,6 +76,12 @@ pub enum LispExp<T: LispContext> {
         /// Native implementation invoked with evaluated arguments.
         pointer: LispPrimitive<T>,
         /// Lisp docstring; defaults to "No documentation provided." when absent.
+        doc: Arc<Cow<'static, str>>,
+    },
+    /// A stateful host callable.
+    /// Clones share its identity and captured state.
+    Native {
+        callback: Arc<LispNative<T>>,
         doc: Arc<Cow<'static, str>>,
     },
     /// A shared mutable value.
@@ -159,6 +165,12 @@ impl<T: LispContext> PartialEq for LispExp<T> {
 
                 (Primitive { pointer: a, .. }, Primitive { pointer: b, .. }) => {
                     if a != b {
+                        return false;
+                    }
+                }
+
+                (Native { callback: a, .. }, Native { callback: b, .. }) => {
+                    if !Arc::ptr_eq(a, b) {
                         return false;
                     }
                 }
@@ -309,6 +321,8 @@ impl<T: LispContext> std::fmt::Debug for LispExp<T> {
                     LispExp::Primitive { .. } => {
                         f.write_str("#<primitive>")?;
                     }
+
+                    LispExp::Native { .. } => f.write_str("#<native>")?,
 
                     // Atoms may contain themselves or be locked by the caller.
                     LispExp::Atom(_) => f.write_str("#<atom>")?,
@@ -473,6 +487,20 @@ impl<T: LispContext> LispExp<T> {
     pub fn primitive(pointer: LispPrimitive<T>, doc: Option<Cow<'static, str>>) -> LispExp<T> {
         LispExp::Primitive {
             pointer,
+            doc: Arc::new(doc.unwrap_or(Cow::Borrowed("No documentation provided."))),
+        }
+    }
+
+    /// Create a host callable with shared, owned state.
+    pub fn native<F>(callback: F, doc: Option<Cow<'static, str>>) -> Self
+    where
+        F: Fn(&[LispExp<T>], Arc<Env<T>>, &T) -> Result<LispExp<T>, EvalError<T>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        Self::Native {
+            callback: Arc::new(callback),
             doc: Arc::new(doc.unwrap_or(Cow::Borrowed("No documentation provided."))),
         }
     }

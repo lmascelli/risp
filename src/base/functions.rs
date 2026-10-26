@@ -172,7 +172,9 @@ fn primitive_function_doc<T: LispContext>(
                         };
                         Ok(LispExp::string(doc))
                     }
-                    LispExp::Primitive { pointer: _, doc } => Ok(LispExp::string(doc.to_string())),
+                    LispExp::Primitive { pointer: _, doc } | LispExp::Native { doc, .. } => {
+                        Ok(LispExp::string(doc.to_string()))
+                    }
                     _ => Ok(LispExp::nil()),
                 }
             } else {
