@@ -140,7 +140,8 @@ fn primitive_eval_string_safe<T: LispContext>(
 const FUNCTION_DOC_DOC: &str = "(function-doc SYMBOL): Return the documentation string of the \
                  function bound to SYMBOL, or \"Undocumented function\" if it \
                  has none. Returns nil and logs a diagnostic if SYMBOL names no \
-                 function. Not a standard Elisp primitive -- the closest real \
+                 function. Returns nil for a binding that is neither a lambda nor a primitive.\n\n\
+                 Not a standard Elisp primitive -- the closest real \
                  Elisp equivalent is `documentation`.\n\n\
                  Example:\n\
                  (function-doc 'car) => \"(car LIST): Return the first \
@@ -172,7 +173,7 @@ fn primitive_function_doc<T: LispContext>(
                         Ok(LispExp::string(doc))
                     }
                     LispExp::Primitive { pointer: _, doc } => Ok(LispExp::string(doc.to_string())),
-                    _ => unreachable!(),
+                    _ => Ok(LispExp::nil()),
                 }
             } else {
                 ctx.log_diagnostic(&format!(

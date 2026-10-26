@@ -256,7 +256,51 @@ impl<'source> Parser<'source> {
         parser
     }
 
+    /// Discard cached state belonging to a failed expression.
+    #[cold]
+    fn reset_after_error(&mut self) {
+        self.token.clear();
+        self.lexer_state = ParserLexerState::Default;
+        self.current_token = Token::Uninitialized;
+        self.parens_stack.clear();
+    }
+
+    /// Consume the remainder of a malformed numeric token. Keep its delimiter
+    /// available to the normal lexer, including a following comment marker.
+    #[cold]
+    fn discard_numeric_tail(&mut self) {
+        while let Some(&c) = self.source.peek() {
+            if matches!(
+                c,
+                ' ' | '\t' | '\n' | '\r' | '(' | ')' | '[' | ']' | '{' | '}' | ';'
+            ) {
+                break;
+            }
+            self.source.next();
+        }
+    }
+
     pub(super) fn next_token(&mut self) -> Result<Option<Token>, ParserError> {
+        match self.lex_next_token() {
+            Ok(token) => Ok(token),
+            Err(err) => {
+                match &err {
+                    ParserError::NumberParseError(_) => self.discard_numeric_tail(),
+                    ParserError::UnbalancedRParen
+                    | ParserError::UnbalancedRSquared
+                    | ParserError::UnbalancedRBracket => {
+                        // These branches detected, but did not consume, the delimiter.
+                        self.source.next();
+                    }
+                    _ => {}
+                }
+                self.reset_after_error();
+                Err(err)
+            }
+        }
+    }
+
+    fn lex_next_token(&mut self) -> Result<Option<Token>, ParserError> {
         while let Some(c) = self.source.peek() {
             match self.lexer_state {
                 ParserLexerState::Default => match c {
@@ -593,7 +637,9 @@ impl<'source> Parser<'source> {
                             }
                         }
                         _ => {
-                            todo!("{:?}", self.token);
+                            return Err(ParserError::UnexpectedToken(std::mem::take(
+                                &mut self.token,
+                            )));
                         }
                     }
                 } else {
@@ -660,8 +706,18 @@ impl<'source> Parser<'source> {
     /// Returns `VoidExp` when no expression is available. This includes both
     /// clean end of input and a dangling quote or other reader prefix.
     /// Malformed input returns a lexical or structural error; nesting beyond
-    /// 256 reader frames returns `TooDeep`. Recovery after an error is not guaranteed.
+    /// 256 reader frames returns `TooDeep`. After an error, cached state for the
+    /// failed expression is discarded. Malformed numeric tokens are skipped to
+    /// their next delimiter; general structural resynchronization is not guaranteed.
     pub fn next<T: LispContext>(&mut self) -> Result<LispExp<T>, ParserError> {
+        let result = self.read_next();
+        if result.is_err() {
+            self.reset_after_error();
+        }
+        result
+    }
+
+    fn read_next<T: LispContext>(&mut self) -> Result<LispExp<T>, ParserError> {
         let mut frames: Vec<ReadFrame<T>> = Vec::new();
         let mut ready: Option<LispExp<T>> = None;
 

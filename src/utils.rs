@@ -107,6 +107,7 @@ pub fn bind_lambda_args<T: LispContext>(
 }
 
 /// Parse required, optional, and rest parameter names, validating marker order.
+/// Reject self-evaluating symbols, which cannot be read as lexical bindings.
 pub(super) fn parse_lambda_params<T: LispContext>(
     params_list: &[LispExp<T>],
 ) -> Result<(Vec<String>, Vec<String>, Option<String>), EvalError<T>> {
@@ -127,6 +128,9 @@ pub(super) fn parse_lambda_params<T: LispContext>(
         let LispExp::Symbol(name) = param else {
             return Err(EvalError::DefunParamIsNotASymbol);
         };
+        if matches!(name.as_str(), "t" | "nil") || name.starts_with(':') {
+            return Err(EvalError::DefunInvalidParameterName(name.to_string()));
+        }
         match name.as_str() {
             "&optional" => {
                 if mode != Mode::Required {
@@ -171,6 +175,7 @@ pub(super) fn error_symbol<T: LispContext>(err: &EvalError<T>) -> LispExp<T> {
         }
         EvalError::WrongNumberOfArguments { .. } => "wrong-number-of-arguments",
         EvalError::WrongArgumentType { .. } => "wrong-type-argument",
+        EvalError::DefunInvalidParameterName(_) => "invalid-parameter-name",
         EvalError::OutOfFuel => "out-of-fuel",
         EvalError::EvalDepthExceeded => "eval-depth-exceeded",
         EvalError::RuntimeMessage(_) => "runtime-error",
@@ -186,7 +191,9 @@ pub(super) fn error_data<T: LispContext>(err: &EvalError<T>) -> LispExp<T> {
         EvalError::WrongArgumentType { expected, got } => {
             LispExp::proper_list(vec![LispExp::string(expected.clone()), got.clone()])
         }
-        EvalError::UnboundVariable(name) | EvalError::UndefinedFunction(name) => {
+        EvalError::UnboundVariable(name)
+        | EvalError::UndefinedFunction(name)
+        | EvalError::DefunInvalidParameterName(name) => {
             LispExp::proper_list(vec![LispExp::symbol(name.clone())])
         }
         EvalError::WrongNumberOfArguments { expected, got } => LispExp::proper_list(vec![

@@ -47,6 +47,8 @@ pub enum EvalError<T: LispContext> {
     DefunParamsAreNotAList,
     /// A parameter declaration contains a non-symbol value.
     DefunParamIsNotASymbol,
+    /// A parameter name is self-evaluating (`t`, `nil`, or a keyword).
+    DefunInvalidParameterName(String),
     /// `&rest` is not followed by exactly one parameter name.
     DefunRestMustHaveExactlyOneParam,
     /// An `&optional` or `&rest` marker is repeated or out of order.
