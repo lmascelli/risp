@@ -308,18 +308,27 @@ mod tests {
 
     #[test]
     fn a_yield_inside_a_condition_case_is_refused() {
-        // The handler lives on the Rust stack, so suspension must be rejected as an error.
         let (env, ctx) = setup();
+    
         run(
-            r#"(setq f (fiber (progn (condition-case e (yield) (error (log "handled"))))))"#,
+            r#"(setq f
+                  (fiber
+                    (condition-case e
+                        (yield)
+                      (error (log "handled")))))"#,
             &env,
             &ctx,
         );
-        run("(resume f)", &env, &ctx);
-        assert_eq!(ctx.lines(), vec!["handled"]);
+    
+        assert_eq!(
+            try_run("(resume f)", &env, &ctx).unwrap_err(),
+            EvalError::YieldNotAllowed,
+        );
+    
+        assert!(ctx.lines().is_empty());
+    
         assert!(
-            run("(resume f)", &env, &ctx).is_nil(),
-            "nothing was left suspended"
+            run("(fiber-done-p f)", &env, &ctx).is_truthy()
         );
     }
 

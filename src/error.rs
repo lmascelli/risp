@@ -92,6 +92,7 @@ pub enum EvalError<T: LispContext> {
         frames: Vec<Frame<T>>,
     },
     /// A yield occurred outside a resumable statement position.
+    /// Propagates through Lisp `condition-case` without invoking its handlers.
     YieldNotAllowed,
     /// An explicit Lisp condition and its associated data.
     Signal {

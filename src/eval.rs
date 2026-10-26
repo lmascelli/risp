@@ -1027,6 +1027,10 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 Ok(value) => return Ok(EvalStep::Done(value)),
                 // Throws bypass condition handlers and continue to the matching catch.
                 Err(throw @ EvalError::Throw { .. }) => return Err(throw),
+
+                // No continuation can resume this unsupported suspension.
+                Err(err @ EvalError::YieldNotAllowed) => return Err(err),
+                
                 Err(err) => err,
             };
 
