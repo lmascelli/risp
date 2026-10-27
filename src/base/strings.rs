@@ -296,8 +296,8 @@ fn primitive_split_string<T: LispContext>(
 
 const FORMAT_DOC: &str = "(format STRING &rest OBJECTS): Format OBJECTS according to \
                  the directives in STRING and return the result. Supports \
-                 %s/%S (display), %d (integer), %f (float), and %% (literal \
-                 percent). Signals an error if there are fewer OBJECTS than \
+                 %s/%S (display), %d (integer, finite and floor truncated), %f (float),\
+                 and %% (literal percent). Signals an error if there are fewer OBJECTS than \
                  directives require.\n\n\
                  Example:\n\
                  (format \"%s is %d\" \"age\" 30) => \"age is 30\"\n\
@@ -331,10 +331,23 @@ fn primitive_format<T: LispContext>(
                     result.push_str(&lisp_display(next_arg(&mut arg_idx)?));
                 }
                 Some('d') => {
-                    result.push_str(&format!(
-                        "{}",
-                        expect_number(next_arg(&mut arg_idx)?)? as i64
-                    ));
+                    let value = next_arg(&mut arg_idx)?;
+                    let number = expect_number(value)?;
+
+                    if !number.is_finite() {
+                        return Err(EvalError::WrongArgumentType {
+                            expected: "finite number for %d".into(),
+                            got: value.clone(),
+                        });
+                    }
+
+                    let integer = number.trunc();
+
+                    if integer == 0.0 {
+                        result.push('0');
+                    } else {
+                        result.push_str(&format!("{integer:.0}"));
+                    }
                 }
                 Some('f') => {
                     result.push_str(&format!("{}", expect_number(next_arg(&mut arg_idx)?)?));
@@ -345,21 +358,8 @@ fn primitive_format<T: LispContext>(
                 }
                 None => result.push('%'),
             }
-        } else if c == '\\' {
-            match chars.next() {
-                Some('n') => result.push('\n'),
-                Some('t') => result.push('\t'),
-                Some('r') => result.push('\r'),
-                Some(other) => {
-                    return Err(EvalError::RuntimeMessage(format!(
-                        "Wrong escape character \\{other}"
-                    )));
-                }
-                None => result.push('\\'),
-            }
         } else {
             result.push(c);
-            continue;
         }
     }
     Ok(LispExp::string(result))

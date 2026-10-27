@@ -171,7 +171,12 @@ fn expect_string<T: LispContext>(exp: &LispExp<T>) -> Result<String, EvalError<T
 }
 
 fn format_number(n: f64) -> String {
-    if n.is_finite() && n.fract() == 0.0 {
+    const EXACT_INTEGER_LIMIT: f64 = 9_007_199_254_740_992.0;
+    
+    if n.is_finite()
+        && n.fract() == 0.0
+        && n.abs() < EXACT_INTEGER_LIMIT
+    {
         format!("{}", n as i64)
     } else {
         format!("{}", n)
