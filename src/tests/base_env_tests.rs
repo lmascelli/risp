@@ -405,4 +405,175 @@ mod tests {
             assert_eq!(eval_ok(&source), LispExp::t(), "literal: {literal}");
         }
     }
+
+    #[test]
+    fn format_preserves_literal_backslashes() {
+        for (source, expected) in [
+            (
+                r#"(format "\\b%s\\b" "word")"#,
+                r"\bword\b",
+            ),
+            (
+                r#"(format "C:\\Users\\%s" "me")"#,
+                r"C:\Users\me",
+            ),
+            (
+                r#"(format "\\n\\t\\r")"#,
+                r"\n\t\r",
+            ),
+            (
+                r#"(format "\\")"#,
+                "\\",
+            ),
+            (
+                r#"(format "\\%s" "x")"#,
+                r"\x",
+            ),
+            (
+                r#"(format "%s" "\\n\\b")"#,
+                r"\n\b",
+            ),
+        ] {
+            assert_eq!(
+                eval_ok(source),
+                LispExp::string(expected.into()),
+                "source: {source}",
+            );
+        }
+    }
+
+    #[test]
+    fn format_preserves_escapes_already_decoded_by_the_reader() {
+        assert_eq!(
+            eval_ok(r#"(format "a\nb\tc\rd")"#),
+            LispExp::string("a\nb\tc\rd".into()),
+        );
+    }
+
+    #[test]
+    fn format_directives_still_work() {
+        assert_eq!(
+            eval_ok(r#"(format "%s %d %f %%" "x" -3.9 1.5)"#),
+            LispExp::string("x -3 1.5 %".into()),
+        );
+    }
+
+    #[test]
+    fn format_still_rejects_missing_arguments() {
+        assert!(matches!(
+            eval_err(r#"(format "%s %d" "x")"#),
+            EvalError::WrongNumberOfArguments {
+                expected: 3,
+                got: 2,
+            }
+        ));
+    }
+
+    #[test]
+    fn number_to_string_handles_small_and_large_values() {
+        for (literal, expected) in [
+            ("0", "0"),
+            ("-0.0", "0"),
+            ("5", "5"),
+            ("-5", "-5"),
+            ("5.5", "5.5"),
+            ("-5.5", "-5.5"),
+            ("9007199254740991", "9007199254740991"),
+            ("9007199254740992", "9007199254740992"),
+            ("10000000000000000000", "10000000000000000000"),
+            ("-10000000000000000000", "-10000000000000000000"),
+        ] {
+            let source = format!("(number-to-string {literal})");
+
+            assert_eq!(
+                eval_ok(&source),
+                LispExp::string(expected.into()),
+                "source: {source}",
+            );
+        }
+    }
+
+    #[test]
+    fn number_to_string_round_trips_values_outside_i64_range() {
+        for literal in [
+            "18446744073709551616",
+            "-18446744073709551616",
+            "100000000000000000000",
+        ] {
+            let source = format!(
+                "(= (string-to-number (number-to-string {literal}))
+                    {literal})"
+            );
+
+            assert_eq!(
+                eval_ok(&source),
+                LispExp::t(),
+                "source: {source}",
+            );
+        }
+    }
+
+    #[test]
+    fn format_integer_truncates_without_saturating() {
+        for (literal, expected) in [
+            ("3.9", "3"),
+            ("-3.9", "-3"),
+            ("0.5", "0"),
+            ("-0.5", "0"),
+            ("-0.0", "0"),
+            ("10000000000000000000", "10000000000000000000"),
+            ("-10000000000000000000", "-10000000000000000000"),
+            ("18446744073709551616", "18446744073709551616"),
+            ("-18446744073709551616", "-18446744073709551616"),
+        ] {
+            let source = format!(r#"(format "%d" {literal})"#);
+
+            assert_eq!(
+                eval_ok(&source),
+                LispExp::string(expected.into()),
+                "source: {source}",
+            );
+        }
+    }
+
+    #[test]
+    fn format_integer_rejects_non_finite_numbers() {
+        for value in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            let env = env_with_primitives();
+
+            // Inject through Rust so this test does not depend on the
+            // reader's or string-to-number's policy for non-finite values.
+            env.set_variable(
+                "non-finite-value".into(),
+                LispExp::number(value),
+            );
+
+            let error = eval_str(
+                r#"(format "%d" non-finite-value)"#,
+                env,
+            )
+            .expect_err("%d must reject non-finite numbers");
+
+            match error {
+                EvalError::WrongArgumentType {
+                    expected,
+                    got: LispExp::Number(number),
+                } => {
+                    assert_eq!(expected, "finite number for %d");
+
+                    // NaN cannot be checked with assert_eq!.
+                    if value.is_nan() {
+                        assert!(number.is_nan());
+                    } else {
+                        assert_eq!(number, value);
+                    }
+                }
+                other => panic!("unexpected error: {other:?}"),
+            }
+        }
+    }
 }
