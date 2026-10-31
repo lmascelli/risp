@@ -72,3 +72,10 @@ pub use handshake::bootstrap_vm;
 #[cfg(test)]
 use parser::Token;
 mod tests;
+
+/// Plain-text index of the base functions and evaluator special forms.
+///
+/// Embedders may write this page to their own documentation directory.
+/// The text belongs to this version of Risp; no interpreter is initialized
+/// and no filesystem writes occur when this constant is used.
+pub const BASE_FUNCTION_INDEX: &str = include_str!("../man/risp-base-index.txt");
