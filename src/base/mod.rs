@@ -7,7 +7,10 @@ use crate::{
     Env, EvalError, LispContext, LispExp, Parser, VARIABLE_DOCUMENTATION, bind_lambda_args, eval,
     exact_arity, resume_frames, some_arguments,
 };
-use std::sync::{Arc, RwLock};
+use std::{
+    collections::HashSet,
+    sync::{Arc, RwLock},
+};
 
 macro_rules! nil {
     () => {
@@ -237,11 +240,27 @@ pub fn call_callable<T: LispContext>(
         LispExp::Primitive { pointer: f, doc: _ } => f(call_args, env, ctx),
         LispExp::Native { callback, .. } => callback(call_args, env, ctx),
         LispExp::Symbol(name) => {
-            if let Some(resolved) = env.get_function(name) {
-                call_callable(&resolved, call_args, env, ctx)
-            } else {
-                Err(EvalError::UndefinedFunction(name.to_string()))
+            let mut target = env
+                .get_function(name)
+                .ok_or_else(|| {
+                    EvalError::UndefinedFunction(name.to_string())
+                })?;
+
+            let mut visited = HashSet::new();
+
+            while let LispExp::Symbol(alias) = &target {
+                if !visited.insert(alias.clone()) {
+                    return Err(EvalError::UncorrectFunctionDefinition);
+                }
+
+                target = env
+                    .get_function(alias)
+                    .ok_or_else(|| {
+                        EvalError::UndefinedFunction(alias.to_string())
+                    })?;
             }
+
+            call_callable(&target, call_args, env, ctx)
         }
         _ => Err(EvalError::UncorrectFunctionDefinition),
     }

@@ -5,10 +5,6 @@
 - Aggiungere all'enum di LispExp il ThreadHandle che permette di interagire
   con un thread creato tramite spawn
 
-1. Consolidare baseline e riproduzioni.
-   Conservare test, doctest e benchmark attuali come riferimento.
-   Trasformare i casi dell’audit in regressioni, eseguendo in sottoprocessi
-   limitati quelli che possono causare abort o blocchi.
 2. Chiudere i percorsi che possono esaurire lo stack.
    Rendere sicure le conversioni ricorsive fra dati e codice. Gestire gli alias
    ciclici e verificare che i limiti coprano anche questi percorsi, oltre alla

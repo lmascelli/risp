@@ -258,4 +258,3 @@ SEE ALSO
 
 SOURCE
     Primitive inventory and behavior reviewed against Risp f1bac0c.
-    Layout follows rsedit/man/editing-index.txt at rsedit bb86120.

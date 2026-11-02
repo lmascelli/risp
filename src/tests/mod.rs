@@ -19,6 +19,7 @@ mod eval_depth_tests;
 mod eval_tests;
 mod fiber_tests;
 mod fuel;
+mod function_aliases;
 mod handshake;
 mod lexer_tests;
 mod lexical_context;
