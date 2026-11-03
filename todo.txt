@@ -63,3 +63,5 @@
     dei contenitori; uniformare nomi e contratti. Aggiornare README e manuali, sistemare
     i test esclusi, eliminare i duplicati e predisporre CI con test, doctest, formattazione
     e lint. Tenere distinti nei commit riordino strutturale e correzioni funzionali.
+
+- aggiungere notazione esponenziale per i numberi (tipo 1e20)    

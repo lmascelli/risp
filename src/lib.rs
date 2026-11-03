@@ -47,12 +47,12 @@ mod utils;
 
 pub use context::LispContext;
 pub use environment::{Env, VARIABLE_DOCUMENTATION};
-pub use error::EvalError;
+pub use error::{EvalError};
 pub use eval::{eval, resume_frames};
 pub use fuel::measure;
 pub use fuel::{DEFAULT_FUEL, FuelMeter, FuelScope, set_remaining};
 pub use lispexp::LispExp;
-pub use parser::{Parser, form_to_data};
+pub use parser::{Parser, ParserError, form_to_data};
 pub use source_map::{Location, SourceMap};
 use types::{
     ConsCell, ConsIter, FiberState, LispMap, LispVec, SharedAtom, SharedFiber, SharedThreadHandle,
