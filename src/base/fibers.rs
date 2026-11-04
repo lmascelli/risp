@@ -85,13 +85,14 @@ fn primitive_resume<T: LispContext>(
     };
     let outcome = resume_frames(frames, ctx);
 
+    let mut retired_frames = Vec::new();
     let mut fiber = shared_fiber
         .0
         .write()
         .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
     let result = match outcome {
         Err(EvalError::Yielded { value, frames }) => {
-            fiber.pending = frames;
+            retired_frames = std::mem::replace(&mut fiber.pending, frames);
             fiber.status = crate::FiberStatus::Suspended;
             Ok(value)
         }
@@ -104,7 +105,10 @@ fn primitive_resume<T: LispContext>(
             Err(other)
         }
     };
+
     running.finished = true;
+    drop(fiber);
+    drop(retired_frames);
     result
 }
 

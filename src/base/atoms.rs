@@ -79,11 +79,15 @@ fn primitive_reset<T: LispContext>(
     } else {
         if let LispExp::Atom(atom_lock) = &args[0] {
             let new_val = &args[1];
-            let mut guard = atom_lock
-                .0
-                .write()
-                .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
-            *guard = new_val.clone();
+            let previous = {
+                let mut guard = atom_lock
+                    .0
+                    .write()
+                    .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
+                std::mem::replace(&mut *guard, new_val.clone())
+            };
+
+            drop(previous);
             Ok(new_val.clone())
         } else {
             Err(EvalError::WrongArgumentType {

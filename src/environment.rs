@@ -84,12 +84,17 @@ impl<T: LispContext> Env<T> {
     pub fn put_property(&self, symbol: &str, key: &str, value: LispExp<T>) {
         let owner = self.property_owner();
         if let Some(properties) = &owner.properties {
-            properties
-                .write()
-                .expect("Failed to acquire write lock on properties")
-                .entry(symbol.to_string())
-                .or_default()
-                .insert(key.to_string(), value);
+            let previous = {
+                let mut table = properties
+                    .write()
+                    .expect("Failed to acquire write lock on properties");
+                table
+                    .entry(symbol.to_string())
+                    .or_default()
+                    .insert(key.to_string(), value)
+            };
+
+            drop(previous);
         }
     }
 
@@ -129,10 +134,15 @@ impl<T: LispContext> Env<T> {
     }
 
     fn bind(&self, namespace: Namespace, name: String, val: LispExp<T>) {
-        self.table(namespace)
-            .write()
-            .expect("Failed to acquire write lock on env")
-            .insert(name, val);
+        let previous = {
+            let mut table = self
+                .table(namespace)
+                .write()
+                .expect("Failed to acquire write lock on env");
+            table.insert(name, val)
+        };
+
+        drop(previous);
     }
 
     /// Clone the nearest variable binding, or return `None` if unbound.
@@ -162,26 +172,32 @@ impl<T: LispContext> Env<T> {
 
     /// Replace the nearest existing variable binding.
     ///
-    /// Returns `false` if unbound; no binding is created in that case.
+    /// Returns false if unbound; no binding is created in that case.
     pub fn update_variable(&self, name: &str, val: LispExp<T>) -> bool {
-        if self
-            .variables
-            .read()
-            .expect("Failed to acquire read lock on env")
-            .contains_key(name)
-        {
-            self.variables
-                .write()
-                .expect("Failed to acquire write lock on env")
-                .insert(name.to_string(), val);
-            return true;
-        }
-        if let Some(parent) = &self.parent {
-            return parent.update_variable(name, val);
-        }
-        false
-    }
+        let mut env = self;
 
+        loop {
+            let mut variables = env
+                .variables
+                .write()
+                .expect("Failed to acquire write lock on env");
+
+            if let Some(binding) = variables.get_mut(name) {
+                let previous = std::mem::replace(binding, val);
+                drop(variables);
+                drop(previous);
+                return true;
+            }
+
+            drop(variables);
+
+            match env.parent.as_deref() {
+                Some(parent) => env = parent,
+                None => return false,
+            }
+        }
+    }
+    
     /// Clone the nearest function binding, or return `None` if unbound.
     pub fn get_function(&self, name: &str) -> Option<LispExp<T>> {
         self.lookup(Namespace::Functions, name)
