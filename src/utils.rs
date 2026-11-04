@@ -34,35 +34,77 @@ pub fn some_arguments<T: LispContext>(args: &[LispExp<T>]) -> Result<(), EvalErr
 }
 
 /// Convert list data into executable forms, preserving quoted payloads.
-/// Reject improper code lists; recurse into vector contents.
-pub(super) fn data_to_form<T: LispContext>(exp: &LispExp<T>) -> Result<LispExp<T>, EvalError<T>> {
-    match exp {
-        LispExp::Cons(_) => {
-            let (items, tail) = exp.split_list();
-            if !tail.is_nil() {
-                return Err(EvalError::UnvalidFunctionCall);
-            }
-            // Keep the argument of `quote` as data, matching the reader's representation.
-            if items.len() == 2 {
-                if matches!(&items[0], LispExp::Symbol(s) if s.as_str() == "quote") {
-                    return Ok(LispExp::form(vec![items[0].clone(), items[1].clone()]));
-                }
-            }
-            let mut form = Vec::with_capacity(items.len());
-            for item in &items {
-                form.push(data_to_form(item)?);
-            }
-            Ok(LispExp::form(form))
-        }
-        LispExp::Vector(items) => {
-            let mut out = Vec::with_capacity(items.len());
-            for item in items.iter() {
-                out.push(data_to_form(item)?);
-            }
-            Ok(LispExp::vec(out))
-        }
-        other => Ok(other.clone()),
+/// Visit lists and vectors iteratively; reject improper code lists.
+pub(super) fn data_to_form<T: LispContext>(
+    exp: &LispExp<T>,
+) -> Result<LispExp<T>, EvalError<T>> {
+    enum Task<'a, T: LispContext> {
+        Visit(&'a LispExp<T>),
+        FinishForm(usize),
+        FinishVector(usize),
     }
+
+    if !matches!(exp, LispExp::Cons(_) | LispExp::Vector(_)) {
+        return Ok(exp.clone());
+    }
+
+    let mut pending = vec![Task::Visit(exp)];
+    let mut converted = Vec::new();
+
+    while let Some(task) = pending.pop() {
+        match task {
+            Task::Visit(value) => match value {
+                LispExp::Cons(_) => {
+                    let mut items = Vec::new();
+                    let mut tail = value;
+
+                    while let LispExp::Cons(cell) = tail {
+                        items.push(&cell.car);
+                        tail = &cell.cdr;
+                    }
+
+                    if !tail.is_nil() {
+                        return Err(EvalError::UnvalidFunctionCall);
+                    }
+
+                    // A quoted payload must remain data, including dotted lists.
+                    if items.len() == 2
+                        && matches!(
+                            items[0],
+                            LispExp::Symbol(name) if name.as_str() == "quote"
+                        )
+                    {
+                        converted.push(LispExp::form(
+                            items.into_iter().cloned().collect(),
+                        ));
+                        continue;
+                    }
+
+                    pending.push(Task::FinishForm(items.len()));
+                    pending.extend(items.into_iter().rev().map(Task::Visit));
+                }
+
+                LispExp::Vector(items) => {
+                    pending.push(Task::FinishVector(items.len()));
+                    pending.extend(items.iter().rev().map(Task::Visit));
+                }
+
+                other => converted.push(other.clone()),
+            },
+
+            Task::FinishForm(count) => {
+                let items = converted.split_off(converted.len() - count);
+                converted.push(LispExp::form(items));
+            }
+
+            Task::FinishVector(count) => {
+                let items = converted.split_off(converted.len() - count);
+                converted.push(LispExp::vec(items));
+            }
+        }
+    }
+
+    Ok(converted.pop().expect("conversion produces one root value"))
 }
 
 /// Bind required, optional, and rest arguments in the call frame.

@@ -206,21 +206,74 @@ pub struct Parser<'source> {
     current_end: (u32, u32),
 }
 
-/// Convert syntax forms to proper data lists recursively.
+/// Convert syntax forms to proper data lists without recursive traversal.
 ///
-/// Recurse through vector and map contents, preserving those container types.
+/// Visit vector and map contents, preserving those container types.
 /// Other values, including existing cons lists, are cloned unchanged.
 pub fn form_to_data<T: LispContext>(exp: &LispExp<T>) -> LispExp<T> {
-    match exp {
-        LispExp::Form(items) => LispExp::proper_list(items.iter().map(form_to_data).collect()),
-        LispExp::Vector(items) => LispExp::vec(items.iter().map(form_to_data).collect()),
-        LispExp::Map(m) => LispExp::map(
-            m.iter()
-                .map(|(k, v)| (k.clone(), form_to_data(v)))
-                .collect(),
-        ),
-        other => other.clone(),
+    enum Task<'a, T: LispContext> {
+        Visit(&'a LispExp<T>),
+        FinishList(usize),
+        FinishVector(usize),
+        FinishMap(Vec<String>),
     }
+
+    if !matches!(
+        exp,
+        LispExp::Form(_) | LispExp::Vector(_) | LispExp::Map(_)
+    ) {
+        return exp.clone();
+    }
+
+    let mut pending = vec![Task::Visit(exp)];
+    let mut converted = Vec::new();
+
+    while let Some(task) = pending.pop() {
+        match task {
+            Task::Visit(value) => match value {
+                LispExp::Form(items) => {
+                    pending.push(Task::FinishList(items.len()));
+                    pending.extend(items.iter().rev().map(Task::Visit));
+                }
+
+                LispExp::Vector(items) => {
+                    pending.push(Task::FinishVector(items.len()));
+                    pending.extend(items.iter().rev().map(Task::Visit));
+                }
+
+                LispExp::Map(items) => {
+                    let (keys, values): (Vec<_>, Vec<_>) = items
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value))
+                        .unzip();
+
+                    pending.push(Task::FinishMap(keys));
+                    pending.extend(values.into_iter().rev().map(Task::Visit));
+                }
+
+                other => converted.push(other.clone()),
+            },
+
+            Task::FinishList(count) => {
+                let items = converted.split_off(converted.len() - count);
+                converted.push(LispExp::proper_list(items));
+            }
+
+            Task::FinishVector(count) => {
+                let items = converted.split_off(converted.len() - count);
+                converted.push(LispExp::vec(items));
+            }
+
+            Task::FinishMap(keys) => {
+                let values = converted.split_off(converted.len() - keys.len());
+                converted.push(LispExp::map(
+                    keys.into_iter().zip(values).collect(),
+                ));
+            }
+        }
+    }
+
+    converted.pop().expect("conversion produces one root value")
 }
 
 impl<'source> Parser<'source> {

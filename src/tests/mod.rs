@@ -30,5 +30,6 @@ mod perf;
 mod printing_tests;
 mod source_map_tests;
 mod symbol_tests;
+mod syntax_conversion;
 mod thread_tests;
 mod yield_tests;
