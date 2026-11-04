@@ -1146,60 +1146,7 @@ fn parse_let_binding<T: LispContext>(
     }
 }
 
-/// Expands a backquoted template, substituting `(unquote X)` forms with the
-/// evaluation of `X` and splicing the evaluated list produced by
-/// `(unquote-splicing X)` forms into the surrounding list.
-fn eval_backquote<T: LispContext>(
-    exp: &LispExp<T>,
-    env: Arc<Env<T>>,
-    ctx: &T,
-) -> Result<LispExp<T>, EvalError<T>> {
-    fn is_tagged<T: LispContext>(list: &[LispExp<T>], tag: &str) -> bool {
-        list.len() == 2 && matches!(&list[0], LispExp::Symbol(s) if s.as_str() == tag)
-    }
 
-    match exp {
-        LispExp::Form(list) => {
-            if is_tagged(list, "unquote") {
-                return eval(&list[1], env, ctx);
-            }
-
-            let mut result = Vec::with_capacity(list.len());
-            for item in list.iter() {
-                if let LispExp::Form(inner) = item {
-                    if is_tagged(inner, "unquote-splicing") {
-                        let spliced = eval(&inner[1], env.clone(), ctx)?;
-                        match &spliced {
-                            LispExp::Cons(_) => result.extend(spliced.iter()),
-                            LispExp::Form(spliced_list) => {
-                                result.extend(spliced_list.iter().cloned());
-                            }
-                            other => {
-                                if !other.is_nil() {
-                                    return Err(EvalError::WrongArgumentType {
-                                        expected: "List".into(),
-                                        got: other.clone(),
-                                    });
-                                }
-                            }
-                        }
-                        continue;
-                    }
-                }
-                result.push(eval_backquote(item, env.clone(), ctx)?);
-            }
-            Ok(LispExp::proper_list(result))
-        }
-        LispExp::Vector(vec) => {
-            let mut result = Vec::with_capacity(vec.len());
-            for item in vec.iter() {
-                result.push(eval_backquote(item, env.clone(), ctx)?);
-            }
-            Ok(LispExp::vec(result))
-        }
-        _ => Ok(exp.clone()),
-    }
-}
 
 /// Dispatches a call whose head is a bare symbol: if the symbol names a
 /// macro, expand it (with its arguments left unevaluated) and evaluate the
@@ -1225,6 +1172,98 @@ fn eval_macro_or_function_call_step<T: LispContext>(
     } else {
         eval_function_call_step(symbol, args, env, ctx, permitted)
     }
+}
+
+/// Expand a backquoted template without recursive structural traversal.
+/// Unquotes are evaluated left to right; splices are accepted inside forms.
+fn eval_backquote<T: LispContext>(
+    exp: &LispExp<T>,
+    env: Arc<Env<T>>,
+    ctx: &T,
+) -> Result<LispExp<T>, EvalError<T>> {
+    enum Task<'a, T: LispContext> {
+        Visit(&'a LispExp<T>),
+        Splice(&'a LispExp<T>),
+        FinishList(usize),
+        FinishVector(usize),
+    }
+
+    fn is_tagged<T: LispContext>(list: &[LispExp<T>], tag: &str) -> bool {
+        list.len() == 2
+            && matches!(&list[0], LispExp::Symbol(name) if name.as_str() == tag)
+    }
+
+    if !matches!(exp, LispExp::Form(_) | LispExp::Vector(_)) {
+        return Ok(exp.clone());
+    }
+
+    let mut pending = vec![Task::Visit(exp)];
+    let mut converted = Vec::new();
+
+    while let Some(task) = pending.pop() {
+        match task {
+            Task::Visit(value) => match value {
+                LispExp::Form(items) => {
+                    if is_tagged(items, "unquote") {
+                        converted.push(eval(&items[1], env.clone(), ctx)?);
+                        continue;
+                    }
+
+                    // A splice has a variable size, so remember the output
+                    // boundary rather than the number of input elements.
+                    pending.push(Task::FinishList(converted.len()));
+
+                    for item in items.iter().rev() {
+                        let task = match item {
+                            LispExp::Form(inner)
+                                if is_tagged(inner, "unquote-splicing") =>
+                            {
+                                Task::Splice(&inner[1])
+                            }
+                            _ => Task::Visit(item),
+                        };
+                        pending.push(task);
+                    }
+                }
+
+                LispExp::Vector(items) => {
+                    pending.push(Task::FinishVector(converted.len()));
+                    pending.extend(items.iter().rev().map(Task::Visit));
+                }
+
+                other => converted.push(other.clone()),
+            },
+
+            Task::Splice(form) => {
+                let spliced = eval(form, env.clone(), ctx)?;
+                match &spliced {
+                    LispExp::Cons(_) => converted.extend(spliced.iter()),
+                    LispExp::Form(items) => {
+                        converted.extend(items.iter().cloned());
+                    }
+                    other if other.is_nil() => {}
+                    other => {
+                        return Err(EvalError::WrongArgumentType {
+                            expected: "List".into(),
+                            got: other.clone(),
+                        });
+                    }
+                }
+            }
+
+            Task::FinishList(start) => {
+                let items = converted.split_off(start);
+                converted.push(LispExp::proper_list(items));
+            }
+
+            Task::FinishVector(start) => {
+                let items = converted.split_off(start);
+                converted.push(LispExp::vec(items));
+            }
+        }
+    }
+
+    Ok(converted.pop().expect("backquote produces one root value"))
 }
 
 fn eval_function_call_step<T: LispContext>(

@@ -247,20 +247,31 @@ pub(super) fn error_data<T: LispContext>(err: &EvalError<T>) -> LispExp<T> {
     }
 }
 
-/// Match a condition symbol or syntax list; `t` and `error` match all conditions.
+/// Match a condition symbol or syntax list without recursive traversal.
+/// The symbols t and error match all conditions.
 pub(super) fn condition_matches<T: LispContext>(
     condition: &LispExp<T>,
     symbol: &LispExp<T>,
 ) -> bool {
-    match condition {
-        LispExp::Symbol(name) => {
-            let name = name.as_str();
-            name == "t" || name == "error" || condition == symbol
+    let mut current = condition;
+    let mut pending = Vec::new();
+
+    loop {
+        match current {
+            LispExp::Symbol(name) => {
+                if matches!(name.as_str(), "t" | "error") || current == symbol {
+                    return true;
+                }
+            }
+            // Handler conditions are syntax forms, not runtime cons lists.
+            LispExp::Form(items) => pending.extend(items.iter().rev()),
+            _ => {}
         }
-        // Handler conditions are unevaluated syntax, so a list of them is a
-        // `Form`, not a `Cons`.
-        LispExp::Form(items) => items.iter().any(|c| condition_matches(c, symbol)),
-        _ => false,
+
+        match pending.pop() {
+            Some(next) => current = next,
+            None => return false,
+        }
     }
 }
 

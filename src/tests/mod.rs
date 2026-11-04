@@ -29,6 +29,7 @@ mod parser_tests;
 mod perf;
 mod printing_tests;
 mod source_map_tests;
+mod stack_safety_tests;
 mod symbol_tests;
 mod syntax_conversion;
 mod thread_tests;
