@@ -2,42 +2,31 @@
 
 * 18-10-2026
 
-- Aggiungere all'enum di LispExp il ThreadHandle che permette di interagire
-  con un thread creato tramite spawn
-
-2. Chiudere i percorsi che possono esaurire lo stack.
-   Rendere sicure le conversioni ricorsive fra dati e codice. Gestire gli alias
-   ciclici e verificare che i limiti coprano anche questi percorsi, oltre alla
-   normale valutazione Lisp.
-3. Correggere il rilascio dei valori sotto lock.
-   Distruggere callback e valori sostituiti dopo aver rilasciato le guardie.
-   Controllare setter, proprietà, atomi e cleanup per evitare deadlock quando
-   un distruttore rientra nell’host.
-4. Definire il ciclo di vita della memoria.
+- Definire il ciclo di vita della memoria.
    Affrontare i cicli fra ambienti, chiusure, fiber e atomi. Il modello deve liberare
    sia una VM chiusa sia gli oggetti non più raggiungibili durante una sessione;
    definire anche durata e limiti dell’interner dei simboli.
-5. Completare la politica delle risorse.
+- Completare la politica delle risorse.
    Addebitare il lavoro costoso delle primitive e introdurre limiti configurabili a
    dimensioni e profondità. Rendere FuelScope non trasferibile fra thread e chiarire
    la gestione delle quote quando convivono più VM.
-6. Uniformare le chiamate.
+- Uniformare le chiamate.
    Condividere risoluzione, validazione e invocazione fra chiamate nominate, calcolate,
    funcall e callback Rust. Coprire uniformemente lambda, Primitive, Native e alias,
    preservando le chiamate in coda.
-7. Correggere le incoerenze del linguaggio.
+- Correggere le incoerenze del linguaggio.
    Sistemare la destrutturazione degli argomenti delle macro e il backquote su liste
    puntate e mappe. Completare poi aggiornamenti delle liste, duplicati, identità
    di memq/`member`, forme aggiuntive di if e lettura dei numeri.
-8. Migliorare parser e diagnostica pubblica.
+- Migliorare parser e diagnostica pubblica.
    Esportare ParserError, distinguere EOF da input incompleto e associare posizioni
    agli errori di lettura. Aggiungere Display e std::error::Error, rendendo chiaro
    come l’host raccoglie e ripulisce la diagnostica.
-9. Completare il contratto con l’host.
+- Completare il contratto con l’host.
    Definire risultati, errori e gestione dei thread creati da spawn; collegare effettivamente
    ThreadHandle oppure ridurre la superficie incompleta. Valutare controllo dell’host
    su scheduling, numero dei task e cancellazione.
-10. Introdurre la facciata Risp già prevista.
+- Introdurre la facciata Risp già prevista.
     Offrire un ingresso unico per inizializzazione, valutazione del sorgente, chiamate,
     registrazione delle funzioni e configurazione. Verificarlo attraverso esempi e test
     da un crate esterno.
@@ -53,15 +42,15 @@
     call(name, argument) -> Result<LispExp, EvalError>
     register_function(name, primitive)
 
-11. Ottimizzare i costi già misurati.
+- Ottimizzare i costi già misurati.
     Eliminare le copie degli input nelle primitive sulle stringhe, evitare il Vec<char>
     completo per piccole sottostringhe e percorrere direttamente le cons per la membership.
     Successivamente profilare ambienti ed espansioni delle macro, mantenendo separate
     misure di tempo, fuel e allocazioni.
-12. Riordinare codice, documentazione e verifiche.
+- Riordinare codice, documentazione e verifiche.
     Separare i meccanismi principali dell’evaluator, lexer/parser e distruzione
     dei contenitori; uniformare nomi e contratti. Aggiornare README e manuali, sistemare
     i test esclusi, eliminare i duplicati e predisporre CI con test, doctest, formattazione
     e lint. Tenere distinti nei commit riordino strutturale e correzioni funzionali.
 
-- aggiungere notazione esponenziale per i numberi (tipo 1e20)    
+- aggiungere notazione esponenziale per i numberi (tipo 1e20)
