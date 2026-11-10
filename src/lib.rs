@@ -40,6 +40,7 @@ mod error;
 mod eval;
 mod fuel;
 mod lispexp;
+mod risp;
 mod parser;
 mod source_map;
 mod types;
@@ -52,6 +53,7 @@ pub use eval::{eval, resume_frames};
 pub use fuel::measure;
 pub use fuel::{DEFAULT_FUEL, FuelMeter, FuelScope, set_remaining};
 pub use lispexp::LispExp;
+pub use risp::Risp;
 pub use parser::{Parser, ParserError, form_to_data};
 pub use source_map::{Location, SourceMap};
 use types::{

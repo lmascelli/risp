@@ -487,7 +487,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 let lambda_clone = lambda_data.clone();
                 let mut thread_ctx = ctx.clone();
 
-                let handle = std::thread::spawn(move || {
+                let _handle = std::thread::spawn(move || {
                     thread_ctx.begin_thread_evaluation();
                     let thread_frame = Env::new_child(&lambda_clone.env);
                     let mut ret = LispExp::nil();
