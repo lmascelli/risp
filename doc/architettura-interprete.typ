@@ -108,7 +108,7 @@ viene corretto, si aggiorna la descrizione qui e si toglie la scheda là.
   [`utils.rs`], [Arità, grammatica dei parametri, legame degli argomenti, conversione dati → forme, mappatura errori → condizioni.],
   [`fuel.rs`], [Il meccanismo del carburante (@carburante). Non dipende da nulla e il valutatore non lo usa direttamente: serve all'host per implementare `consume_fuel`.],
   [`handshake.rs`], [`bootstrap_vm`: crea l'ambiente radice, installa le primitive e verifica che l'interprete funzioni.],
-  [`base/`], [Le 103 primitive indipendenti dall'host, in undici moduli (@primitive-base).],
+  [`base/`], [Le 106 primitive indipendenti dall'host, in dodici moduli (@primitive-base).],
   [`tests/`], [I test dell'interprete, eseguiti con il contesto `()`.],
 )
 
@@ -119,7 +119,7 @@ esempio, chiama direttamente anche `eval` e `Parser`.
 
 #canvas(height: 6.3cm)[
   #node(6.6cm, 0.4cm, 13.0cm, 0.7cm, [`handshake.rs` --- `bootstrap_vm`: la radice, le primitive, lo script di verifica])
-  #node(6.6cm, 1.6cm, 13.0cm, 0.7cm, [`base/` --- le 103 primitive di base, in undici moduli], fill: paper)
+  #node(6.6cm, 1.6cm, 13.0cm, 0.7cm, [`base/` --- le 106 primitive di base, in dodici moduli], fill: paper)
   #node(4.9cm, 2.8cm, 9.6cm, 0.7cm, [`eval.rs` --- il valutatore])
   #node(11.6cm, 2.8cm, 3.0cm, 0.7cm, [`parser.rs`])
   #node(1.65cm, 4.0cm, 3.1cm, 0.7cm, [`environment.rs`])
@@ -971,6 +971,33 @@ ciascuna restituisce.
   backquote la vede, e non viene espansa. Il commento in `defcommand`
   (`core/lisp/commands.lisp`) mostra come aggirare il problema.
 ]
+
+=== Leggere dati e riscriverli
+
+`Parser::for_data` crea un lettore che parte in modo `Data`, come se tutto il
+testo fosse citato: ogni lista diventa una catena di `Cons` e non nasce nessuna
+`Form`, nemmeno dentro vettori, mappe e liste puntate. È ciò che usa `read`.
+
+`write_readable` (in `printer.rs`) fa il giro inverso: produce un testo che
+`Parser::for_data` rilegge in un valore uguale per `equal`, oppure dice perché
+non può (`Unreadable`). Lavora con una pila esplicita, come la stampa di
+`Debug`, quindi una lista lunga non consuma stack. Le scelte:
+
+- un numero si scrive con `Display` di `f64`, che non usa mai l'esponente (il
+  lexer non lo conosce) e dà le cifre più brevi che si rileggono uguali;
+  infiniti e NaN non hanno sintassi e sono rifiutati;
+- una stringa usa solo gli escape che il lexer decodifica: `\"`, `\\`, `\n`,
+  `\t`, `\r`, `\e`, `\0`; gli altri caratteri restano come sono;
+- un simbolo si scrive com'è se il lexer, da solo, lo rilegge come lo stesso
+  simbolo (`reads_as_symbol`, che non lo interna); altrimenti è rifiutato,
+  perché il lettore non ha escape per i simboli: `a b`, `12`, `.`, il nome
+  vuoto, un nome che comincia con `'` o contiene `;`;
+- una chiave di mappa segue la stessa prova, ma se fallisce si scrive come
+  stringa, che il lettore accetta come chiave: le mappe sono sempre scrivibili;
+- una `Form` si scrive come la lista che rappresenta e si rilegge come dati;
+- contenitori annidati oltre i 256 livelli del lettore danno `TooDeep`;
+- lambda, primitive, funzioni native, atomi, fiber e thread non hanno
+  sintassi: `Unreadable::Value` li restituisce come parte colpevole.
 
 // ===========================================================================
 = Gli ambienti <ambienti>
@@ -2474,7 +2501,7 @@ nella radice, quindi le tre variabili che usa restano globali #rapporto("INT-19"
 == Cosa l'interprete esporta
 
 `lisp/mod.rs` rende pubblici, all'interno del crate: `eval`, `resume_frames`,
-`Parser`, `form_to_data`, `Env`, `VARIABLE_DOCUMENTATION`, `LispExp`, `Lambda`,
+`Parser`, `form_to_data`, `write_readable`, `Unreadable`, `Env`, `VARIABLE_DOCUMENTATION`, `LispExp`, `Lambda`,
 `Frame`, `LispPrimitive`, `EvalError`, `LispContext`, `FuelMeter`, `FuelScope`,
 `DEFAULT_FUEL`, `set_remaining`, `bootstrap_vm`, `setup_base_env`,
 `call_callable`, `lisp_display`, `exact_arity`, `some_arguments` (e `measure`
@@ -2516,6 +2543,7 @@ impl<T: LispContext> Registry<'_, T> {
   [`lists`], [21], [`car`, `cdr`, `cons`, `list`, `nth`, `nthcdr`, `length`, `append`, `reverse`, `member`, `memq`, `assoc`, `assq`, `elt`, `mapcar`, `mapc`, `apply`, `identity`, `add-to-list`, `append-to-list`, `remove-from-list`],
   [`math`], [10], [`+`, `-`, `*`, `/`, `mod`, `%`, `abs`, `floor`, `1+`, `1-`],
   [`predicates`], [14], [`eq`, `eql`, `equal`, `null`, `not`, `consp`, `listp`, `stringp`, `numberp`, `symbolp`, `functionp`, `vectorp`, `zerop`, `atom`],
+  [`readable`], [3], [`read`, `prin1-to-string`, `readablep`],
   [`strings`], [14], [`concat`, `substring`, `string=`, `string<`, `string-diff`, `upcase`, `downcase`, `format`, `make-string`, `number-to-string`, `string-to-number`, `symbol-name`, `intern`, `split-string`],
   [`symbols`], [2], [`put`, `get`],
 )
@@ -2570,6 +2598,8 @@ Le funzioni di aiuto leggono gli argomenti in modo uniforme:
   [`string-to-number`], [0 per un testo non numerico; usa `f64::from_str`.],
   [`split-string`], [Senza separatori divide sugli spazi bianchi e scarta i pezzi vuoti; con una stringa vuota divide in caratteri; altrimenti divide sulle occorrenze letterali della stringa data (`"::"` è un solo separatore di due caratteri, non due separatori).],
   [`intern`, `symbol-name`], [Da stringa a simbolo e ritorno.],
+  [`read`], [Legge con `Parser::for_data`, quindi restituisce dati e non valuta nulla. Vuole esattamente un valore nella stringa; `end-of-file` se il testo finisce prima, `invalid-read-syntax` per il resto. Un'unità di carburante per byte.],
+  [`prin1-to-string`, `readablep`], [Scrivono con `write_readable`. Ciò che non si rilegge fa segnalare `wrong-type-argument` con dati `(readablep PARTE)` alla prima e restituire `nil` alla seconda. Un'unità di carburante per byte scritto.],
   [`eval`, `eval-string`], [Valutano nell'ambiente del #emph[chiamante]: `(let ((x 5)) (eval 'x))` vale 5. `eval-string` valuta solo la prima espressione.],
   [`boundp`, `symbol-value`], [Guardano lo spazio delle variabili dall'ambiente del chiamante.],
   [`function-arglist`], [La lista dei parametri come stringhe, con `&optional` e `&rest`.],
@@ -2625,6 +2655,8 @@ codice da Emacs deve conoscerle.
   [Espressioni regolari], [Sintassi del crate `regex` di Rust (`(...)`), senza lookaround.], [Sintassi Emacs (`\(...\)`).],
   [Macro], [Niente `gensym`, niente docstring; espanse a ogni valutazione.], [`gensym`, docstring, espansione memorizzata dal compilatore.],
   [`yield`, `fiber`, `spawn`, atomi], [Presenti (@fiber, @thread).], [Assenti.],
+  [`read`], [Solo da una stringa, che deve contenere un solo valore.], [Anche da buffer e marcatori; ignora ciò che segue il primo valore.],
+  [`prin1-to-string`], [Rifiuta funzioni, atomi, fiber, infiniti, NaN e simboli che non si rileggono, segnalando `wrong-type-argument`.], [Scrive `#<...>` e non fallisce; i simboli si scrivono con `\` davanti ai caratteri speciali.],
   [Vettori e mappe], [Immutabili: niente `aset` né `puthash`; `vector-set`, `map-insert` e `map-delete` restituiscono una copia. Gli elementi di `[...]` sono valutati.], [`aset` e `puthash` modificano sul posto; `map-delete` di map.el è distruttivo; `[...]` è una costante.],
 )
 
@@ -2683,6 +2715,7 @@ I test stanno in `lisp/tests/` e girano con il contesto `()`.
   [`lisp_core_compliance_tests.rs`], [comportamenti allineati a Emacs Lisp],
   [`parser_tests.rs`, `lexer_tests.rs`], [lettura e token],
   [`base_env_tests.rs`, `documentation_tests.rs`, `symbol_tests.rs`], [primitive di base, docstring, proprietà],
+  [`read_print_tests.rs`], [`read`, `prin1-to-string`, giro completo per ogni tipo, rifiuti, profondità],
   [`vector_map_tests.rs`], [primitive di vettori e mappe, copie, ordine delle chiavi, carburante],
 )
 

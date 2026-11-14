@@ -204,6 +204,8 @@ pub struct Parser<'source> {
     located: Option<Located>,
     /// Position just after the current token; updated only while recording locations.
     current_end: (u32, u32),
+    /// Mode of a top-level expression: code, or data for [`Self::for_data`].
+    root_mode: Mode,
 }
 
 /// Convert syntax forms to proper data lists without recursive traversal.
@@ -276,6 +278,15 @@ pub fn form_to_data<T: LispContext>(exp: &LispExp<T>) -> LispExp<T> {
     converted.pop().expect("conversion produces one root value")
 }
 
+/// Whether `name`, written alone, reads back as the symbol with that name.
+///
+/// Runs the lexer only, so checking a name does not intern it.
+pub(crate) fn reads_as_symbol(name: &str) -> bool {
+    let mut parser = Parser::new(name);
+    matches!(parser.next_token(), Ok(Some(Token::Symbol(read))) if read == name)
+        && matches!(parser.next_token(), Ok(None))
+}
+
 impl<'source> Parser<'source> {
     /// Create a reader without source-location tracking.
     pub fn new(source: &'source str) -> Self {
@@ -287,7 +298,16 @@ impl<'source> Parser<'source> {
             lexer_state: ParserLexerState::Default,
             located: None,
             current_end: (1, 1),
+            root_mode: Mode::Code,
         }
+    }
+
+    /// Create a reader that returns data: every list becomes cons data, as if
+    /// the whole input were quoted, and no [`LispExp::Form`] is produced.
+    pub fn for_data(source: &'source str) -> Self {
+        let mut parser = Self::new(source);
+        parser.root_mode = Mode::Data;
+        parser
     }
 
     /// Create a parser that records list locations in `map` under `file`.
@@ -850,7 +870,7 @@ impl<'source> Parser<'source> {
                 }
             }
 
-            let mode = frames.last().map_or(Mode::Code, ReadFrame::child_mode);
+            let mode = frames.last().map_or(self.root_mode, ReadFrame::child_mode);
 
             match self.current_token.clone() {
                 Token::Void => {

@@ -15,7 +15,7 @@ DESCRIPTION
     parameters; native signatures are in their documentation strings.
     In rsedit, C-h f on a function name opens its help.
 
-    There are 103 base function names, including aliases, and 28 special
+    There are 106 base function names, including aliases, and 28 special
     form names in this version. Native functions supplied by an embedding
     application are not included.
 
@@ -128,6 +128,13 @@ NUMBERS, SYMBOL NAMES AND PROPERTIES
         intern                    the interned symbol with a given name
         put                       store a property on a symbol
         get                       read a symbol property, or nil
+
+READING AND WRITING DATA
+        read                      the one value written in a string,
+                                  unevaluated
+        prin1-to-string           text that read turns back into an equal
+                                  value
+        readablep                 that text, or nil if there is none
 
 CALLING AND EVALUATING
         funcall                   call a function with evaluated arguments
@@ -260,6 +267,26 @@ CURRENT BEHAVIOR
     a whole number inside the vector; elt returns nil instead. The
     elements of a vector literal and the values of a map literal are
     evaluated, so '[a b] is needed for a vector of symbols.
+
+    read returns data: lists come back as cons lists, as if quoted, and
+    nothing is evaluated. Its string must hold exactly one value; Emacs
+    would ignore what follows the first. Text that ends early signals
+    end-of-file, other malformed text and a second value signal
+    invalid-read-syntax; the data is a list with the reader's error as a
+    string. A dangling quote after the value is currently not noticed.
+
+    prin1-to-string writes lists, dotted lists, strings, finite numbers,
+    symbols, vectors and maps so that read gives back an equal value.
+    Numbers are written without an exponent, which the reader does not
+    accept. Map keys are written sorted, bare when they read back as the
+    same symbol and quoted otherwise. Functions, atoms, fibers, thread
+    handles, infinities and NaN have no read syntax, nor do symbols whose
+    name would read differently, such as "a b", "12", "." or the empty
+    name: the reader has no escape for symbols. prin1-to-string signals
+    wrong-type-argument with data (readablep PART) for such a PART, and
+    for containers nested deeper than the reader's 256 levels with PART
+    the whole value. Emacs prints these as #<...> instead. readablep
+    returns nil in the same cases. format's %S does not use this writer.
 
     backquote handles proper syntax lists and vectors. Dotted templates,
     maps and nested backquote levels are not fully expanded. The reader's

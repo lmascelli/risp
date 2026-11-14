@@ -313,6 +313,7 @@ mod inspect;
 mod lists;
 mod math;
 mod predicates;
+mod readable;
 mod strings;
 mod symbols;
 
@@ -344,6 +345,7 @@ pub fn setup_base_env<T: LispContext>(env: Arc<Env<T>>) {
     lists::install(&into);
     math::install(&into);
     predicates::install(&into);
+    readable::install(&into);
     strings::install(&into);
     symbols::install(&into);
 }

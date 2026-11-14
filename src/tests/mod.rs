@@ -29,6 +29,7 @@ mod nonlocal_exit_tests;
 mod parser_tests;
 mod perf;
 mod printing_tests;
+mod read_print_tests;
 mod source_map_tests;
 mod stack_safety_tests;
 mod symbol_tests;
