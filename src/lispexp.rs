@@ -195,10 +195,7 @@ impl<T: LispContext> std::fmt::Debug for LispExp<T> {
             Text(&'static str),
             Tail(&'a LispExp<C>),
             Sequence(std::slice::Iter<'a, LispExp<C>>, bool),
-            MapEntries(
-                std::collections::hash_map::Iter<'a, String, LispExp<C>>,
-                bool,
-            ),
+            MapEntries(std::vec::IntoIter<(&'a String, &'a LispExp<C>)>, bool),
         }
 
         let mut pending = vec![Task::Value(self)];
@@ -267,7 +264,10 @@ impl<T: LispContext> std::fmt::Debug for LispExp<T> {
                     LispExp::Map(map) => {
                         f.write_str("{")?;
                         pending.push(Task::Text("}"));
-                        pending.push(Task::MapEntries(map.iter(), true));
+                        // Sort keys so a map always prints the same way.
+                        let mut entries: Vec<_> = map.iter().collect();
+                        entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
+                        pending.push(Task::MapEntries(entries.into_iter(), true));
                     }
 
                     LispExp::Number(n) => {

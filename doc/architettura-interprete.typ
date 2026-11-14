@@ -108,7 +108,7 @@ viene corretto, si aggiorna la descrizione qui e si toglie la scheda là.
   [`utils.rs`], [Arità, grammatica dei parametri, legame degli argomenti, conversione dati → forme, mappatura errori → condizioni.],
   [`fuel.rs`], [Il meccanismo del carburante (@carburante). Non dipende da nulla e il valutatore non lo usa direttamente: serve all'host per implementare `consume_fuel`.],
   [`handshake.rs`], [`bootstrap_vm`: crea l'ambiente radice, installa le primitive e verifica che l'interprete funzioni.],
-  [`base/`], [Le 86 primitive indipendenti dall'host, in dieci moduli (@primitive-base).],
+  [`base/`], [Le 103 primitive indipendenti dall'host, in undici moduli (@primitive-base).],
   [`tests/`], [I test dell'interprete, eseguiti con il contesto `()`.],
 )
 
@@ -119,7 +119,7 @@ esempio, chiama direttamente anche `eval` e `Parser`.
 
 #canvas(height: 6.3cm)[
   #node(6.6cm, 0.4cm, 13.0cm, 0.7cm, [`handshake.rs` --- `bootstrap_vm`: la radice, le primitive, lo script di verifica])
-  #node(6.6cm, 1.6cm, 13.0cm, 0.7cm, [`base/` --- le 86 primitive di base, in dieci moduli], fill: paper)
+  #node(6.6cm, 1.6cm, 13.0cm, 0.7cm, [`base/` --- le 103 primitive di base, in undici moduli], fill: paper)
   #node(4.9cm, 2.8cm, 9.6cm, 0.7cm, [`eval.rs` --- il valutatore])
   #node(11.6cm, 2.8cm, 3.0cm, 0.7cm, [`parser.rs`])
   #node(1.65cm, 4.0cm, 3.1cm, 0.7cm, [`environment.rs`])
@@ -337,7 +337,7 @@ pub enum LispExp<T: LispContext> {
   [`Form`], [`Arc<Vec<LispExp>>`], [Un nodo di #emph[sintassi]: ciò che il lettore produce e `eval` smista. Mai un valore a tempo di esecuzione.],
   [`Cons`], [`Arc<ConsCell>`], [Una lista di #emph[dati]. Termina in `nil` (lista propria) o in altro (lista puntata).],
   [`Vector`], [`Arc<Vec<LispExp>>`], [`[a b c]`. Valutare un vettore ne valuta gli elementi.],
-  [`Map`], [`Arc<HashMap<String, LispExp>>`], [`{chiave valore ...}`. Chiavi simbolo o stringa, conservate come testo; valutarla ne valuta i valori. L'ordine non è conservato.],
+  [`Map`], [`Arc<HashMap<String, LispExp>>`], [`{chiave valore ...}`. Chiavi simbolo o stringa, conservate come testo; valutarla ne valuta i valori. L'ordine di inserimento non è conservato: la stampa e le primitive seguono l'ordine delle chiavi.],
   [`Number`], [`f64`], [L'unico tipo numerico. Si stampa come intero quando lo è (`3`, non `3.0`).],
   [`Symbol`], [`Arc<String>`, internato], [Due simboli con lo stesso nome condividono lo stesso `Arc`.],
   [`String`], [`Arc<String>`], [Immutabile; clonarla costa un incremento del contatore.],
@@ -2508,6 +2508,7 @@ impl<T: LispContext> Registry<'_, T> {
   columns: (auto, auto, 1fr),
   header: ([Modulo], [N.], [Primitive]),
   [`atoms`], [3], [`make-atom`, `deref`, `reset`],
+  [`collections`], [16], [`vector`, `make-vector`, `aref`, `vector-set`, `make-map`, `mapp`, `map-elt`, `map-contains-key`, `map-insert`, `map-delete`, `map-keys`, `map-values`, `map-pairs`, `map-length`, `map-do`, `map-apply`],
   [`comparisons`], [7], [`=`, `<`, `>`, `<=`, `>=`, `max`, `min`],
   [`fibers`], [2], [`resume`, `fiber-done-p`],
   [`functions`], [8], [`funcall`, `eval`, `eval-string`, `eval-string-safe`, `throw`, `signal`, `function-doc`, `variable-doc`],
@@ -2515,7 +2516,7 @@ impl<T: LispContext> Registry<'_, T> {
   [`lists`], [21], [`car`, `cdr`, `cons`, `list`, `nth`, `nthcdr`, `length`, `append`, `reverse`, `member`, `memq`, `assoc`, `assq`, `elt`, `mapcar`, `mapc`, `apply`, `identity`, `add-to-list`, `append-to-list`, `remove-from-list`],
   [`math`], [10], [`+`, `-`, `*`, `/`, `mod`, `%`, `abs`, `floor`, `1+`, `1-`],
   [`predicates`], [14], [`eq`, `eql`, `equal`, `null`, `not`, `consp`, `listp`, `stringp`, `numberp`, `symbolp`, `functionp`, `vectorp`, `zerop`, `atom`],
-  [`strings`], [13], [`concat`, `substring`, `string=`, `string<`, `upcase`, `downcase`, `format`, `make-string`, `number-to-string`, `string-to-number`, `symbol-name`, `intern`, `split-string`],
+  [`strings`], [14], [`concat`, `substring`, `string=`, `string<`, `string-diff`, `upcase`, `downcase`, `format`, `make-string`, `number-to-string`, `string-to-number`, `symbol-name`, `intern`, `split-string`],
   [`symbols`], [2], [`put`, `get`],
 )
 
@@ -2559,7 +2560,10 @@ Le funzioni di aiuto leggono gli argomenti in modo uniforme:
   [`nth`, `elt`], [Indice fuori dai limiti o negativo: `nil`. `elt` funziona anche su vettori e stringhe.],
   [`length`, `reverse`], [Liste, vettori e stringhe (in caratteri).],
   [`append`], [Concatena; l'ultimo argomento diventa la coda così com'è.],
-  [`mapcar`, `mapc`, `apply`], [Accettano una lambda, una primitiva o un simbolo che nomina una funzione; chiamano con `call_callable`.],
+  [`mapcar`, `mapc`, `apply`], [Accettano una lambda, una primitiva o un simbolo che nomina una funzione; chiamano con `call_callable`. `mapcar` e `mapc` scorrono anche un vettore.],
+  [`aref`, `vector-set`], [Un indice che non è un intero dentro il vettore segnala `args-out-of-range` con dati `(VETTORE INDICE)`; `elt` invece restituisce `nil`. `vector-set` restituisce una copia.],
+  [`make-map`, `map-elt`, `map-insert`, `map-delete`], [Una chiave è una stringa o un simbolo, che vale per il suo nome, come nel lettore. `map-insert` e `map-delete` restituiscono una copia; l'argomento non cambia.],
+  [`map-keys`, `map-values`, `map-pairs`, `map-do`, `map-apply`], [Ordine delle chiavi, stringhe comprese; un'unità di carburante per voce. Le chiavi arrivano come stringhe.],
   [`substring`], [Indici in caratteri, negativi contati dalla fine.],
   [`format`], [`%s`/`%S` (come `lisp_display`), `%d` (tronca a intero), `%f`, `%%`; meno argomenti del necessario è un errore. Riconosce anche le sequenze `\n`, `\t`, `\r` scritte nella stringa di formato e rifiuta le altre #rapporto("INT-12").],
   [`make-string`], [`(make-string N "x")` ripete il #emph[primo carattere] della stringa N volte.],
@@ -2621,6 +2625,7 @@ codice da Emacs deve conoscerle.
   [Espressioni regolari], [Sintassi del crate `regex` di Rust (`(...)`), senza lookaround.], [Sintassi Emacs (`\(...\)`).],
   [Macro], [Niente `gensym`, niente docstring; espanse a ogni valutazione.], [`gensym`, docstring, espansione memorizzata dal compilatore.],
   [`yield`, `fiber`, `spawn`, atomi], [Presenti (@fiber, @thread).], [Assenti.],
+  [Vettori e mappe], [Immutabili: niente `aset` né `puthash`; `vector-set`, `map-insert` e `map-delete` restituiscono una copia. Gli elementi di `[...]` sono valutati.], [`aset` e `puthash` modificano sul posto; `map-delete` di map.el è distruttivo; `[...]` è una costante.],
 )
 
 // ===========================================================================
@@ -2678,6 +2683,7 @@ I test stanno in `lisp/tests/` e girano con il contesto `()`.
   [`lisp_core_compliance_tests.rs`], [comportamenti allineati a Emacs Lisp],
   [`parser_tests.rs`, `lexer_tests.rs`], [lettura e token],
   [`base_env_tests.rs`, `documentation_tests.rs`, `symbol_tests.rs`], [primitive di base, docstring, proprietà],
+  [`vector_map_tests.rs`], [primitive di vettori e mappe, copie, ordine delle chiavi, carburante],
 )
 
 // ===========================================================================

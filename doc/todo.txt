@@ -1,0 +1,1482 @@
+COME USARE I PROMPT CON POCHI TOKEN
+In una nuova chat incolla soltanto l'intestazione BASE qui sotto e il PROMPT
+di una scheda. Non incollare tutto il rapporto. La spiegazione estesa resta
+qui per consultazione; i percorsi/funzioni nel prompt limitano la scansione.
+Un ID isolato non identifica il lavoro in una chat che non ha questo file.
+Nella stessa chat puoi richiamare l'ID quando la scheda e gia nel contesto.
+Dopo ogni patch annota il commit effettivamente applicato e lo stato.
+
+BASE (da incollare una volta per nuova chat)
+Lavora su https://github.com/lmascelli/risp, main aggiornato. Un solo punto.
+Non modificare il mio checkout: prepara una patch su copia temporanea.
+Mantieni le API salvo la modifica esplicitamente richiesta; non toccare
+il branch dell'interfaccia. Leggi prima solo i percorsi indicati. Niente
+refactoring, nuove dipendenze o formattazione dell'intero repository.
+Aggiungi ed esegui test mirati; niente benchmark salvo richiesta. Per i fix
+rispondi con patch, commit base, verifiche reali e massimo cinque righe.
+Per la progettazione: proposta sintetica senza patch o cambiamenti.
+
+PROMPT PER SCHEDA
+================
+
+RISP-01 - Vincolare FuelScope al thread di creazione [APERTO]
+In src/fuel.rs rendi FuelScope non Send/non Sync con un marker
+privato. Preserva rientri e budget. Aggiungi un doctest compile_fail
+sul trasferimento fra thread e verifica i test fuel mirati.
+
+RISP-02 - Passare alle macro argomenti manipolabili come dati [APERTO]
+Correggi eval_macro_or_function_call_step: gli argomenti delle macro
+devono essere dati destrutturabili con car/cdr, senza valutazione
+anticipata. Copri quote, optional/rest ed espansione nel chiamante.
+Non cambiare bind_lambda_args per le funzioni.
+
+RISP-03 - Completare la protezione dei nomi riservati nei binding [PARZIALE]
+Completa INT-22 in src/eval.rs: rifiuta t/nil/keyword in setq,
+let/let*, defvar/defconst e variabili dolist/dotimes. Riusa un
+controllo interno; mantieni le API pubbliche e aggiungi regressioni
+per ciascun costrutto.
+
+RISP-04 - Aggiornare la lista nell'ambiente che possiede il binding [APERTO]
+Correggi INT-15 in src/base/lists.rs: add/append/remove-from-list
+aggiornino il binding esistente piu vicino. Conserva firme &rest e
+valori restituiti. Verifica ambiente globale, scope annidato e
+shadowing locale.
+
+RISP-05 - Eliminare duplicati fra i nuovi elementi delle liste [APERTO]
+In src/base/lists.rs elimina i duplicati fra argomenti di add-to-list
+e append-to-list. Mantieni la firma e l'ordine attuale,
+documentandolo. Correggi anche il messaggio remove-from-list che
+nomina add-to-list.
+
+RISP-06 - Distinguere identita e uguaglianza nelle ricerche [APERTO]
+Correggi INT-16: memq/assq usino la relazione di eq, member/assoc mantengano
+equal. Condividi il confronto internamente con predicates.rs, aggiorna
+docstring e verifica oggetti uguali ma distinti e identici.
+
+RISP-07 - Restituire la coda originale da member e memq [APERTO]
+Riscrivi find_member come cammino sulle Cons: member/memq
+restituiscano la coda originale condivisa, non una copia. Conserva i
+confronti distinti e il fuel per elemento visitato; verifica identita
+del risultato e fallimento.
+
+RISP-08 - Uniformare gli alias nelle chiamate nominate [PARZIALE]
+Allinea eval_function_call_step alla risoluzione alias gia presente in
+call_callable. Riusa il resolver senza perdere il trampolino delle
+lambda. Verifica catene, cicli, nome del target assente e ricorsione
+in coda.
+
+RISP-09 - Accettare Primitive nelle chiamate con testa calcolata [APERTO]
+In eval_step_permitted gestisci una testa calcolata che produce
+LispExp::Primitive, come gia avviene per Lambda/Native. Verifica
+argomenti valutati una sola volta e dispatch coerente con funcall;
+preserva backtrace e TCO.
+
+RISP-10 - Verificare realmente la chiamabilita in functionp [APERTO]
+Correggi primitive_functionp: per i simboli verifica il callable
+risolto, non la sola presenza del binding. Restituisci nil per alias
+invalidi/ciclici senza eseguirli. Riusa il resolver interno e copri
+Lambda, Primitive e Native.
+
+RISP-11 - Completare la grammatica dei numeri del lettore [APERTO]
+Correggi LET-4 in src/parser.rs: supporta .9, +5 ed esponenti finiti,
+preservando +, -, 1+ e simboli alfanumerici. Mantieni recupero e
+limite di profondita. Copri token validi, esponenti incompleti ed EOF.
+
+RISP-12 - Chiudere i simboli sui delimitatori corretti [APERTO]
+Correggi InSymbol in src/parser.rs: CR come spazio; virgolette, apici,
+backquote e virgole terminino il simbolo senza perdere il token
+seguente. Allinea discard_numeric_tail; copri adiacenza, commenti e
+CRLF. Non aggiungere #' o caratteri.
+
+RISP-13 - Espandere code puntate e mappe nel backquote [PARZIALE]
+Estendi eval_backquote iterativo a Cons/code puntate e valori Map.
+Preserva ordine degli unquote e dati quotati; rifiuta splice in
+posizioni non ammesse. Non modificare ancora i livelli di backquote
+annidati.
+
+RISP-14 - Contare i livelli di backquote e unquote [APERTO]
+Completa INT-11: aggiungi la profondita di quasiquote ai task di
+eval_backquote, valutando unquote/splice solo al livello attivo. Mantieni
+visita iterativa e copri due/tre livelli con effetti collaterali osservabili.
+
+RISP-15 - Rifiutare argomenti in eccesso dove la firma e fissa [APERTO]
+Valida l'arita esatta di make-atom, deref, reset, resume e fiber-done-p secondo
+le docstring. Usa exact_arity, copri argomenti mancanti/eccessivi e non
+cambiare funzioni variadiche o contratti diversi documentati.
+
+RISP-16 - Non ignorare forme aggiuntive nel ramo else di if [DECISIONE]
+Analizza INT-24 nel ramo if: proponi in poche righe else multiplo oppure arita
+massima tre e le conseguenze su TCO/yield. Non implementare prima che scelga il
+contratto.
+
+RISP-17 - Isolare e completare la verifica di bootstrap [APERTO]
+Correggi bootstrap_vm: niente verify-math/verify-fiber/fiber-step globali,
+completa la fiber di prova e descrivi i fallimenti. Usa binding locali
+espliciti: un Env figlio non isola setq di nomi nuovi. Mantieni la firma
+pubblica.
+
+RISP-18 - Addebitare le visite prima di materializzare liste [APERTO]
+In expect_list addebita fuel durante la visita, prima di accumulare l'intera
+lista. Copri esaurimento precoce e input invariato. Aggiorna solo le
+aspettative di contabilizzazione direttamente coinvolte; non rifare tutte le
+primitive.
+
+RISP-19 - Addebitare il lavoro di make-string prima dell'allocazione [PARZIALE]
+Completa il fuel di make-string prima di allocare/riempire, senza saturazioni
+che autorizzino lavoro illimitato oltre u32. Mantieni checked_mul,
+try_reserve_exact, UTF-8 e contratto dei conteggi. Non introdurre nuove quote
+pubbliche.
+
+RISP-20 - Recuperare le regressioni del lettore escluse dalla suite [APERTO]
+Ripara DOC-2: inventaria reader_tests.rs e registralo in src/tests/mod.rs.
+Aggiorna UnexpectedDot al contratto attuale. Mantieni le regressioni future
+collegate ai relativi task, senza indebolire asserzioni per far passare la
+suite.
+
+RISP-21 - Rendere affidabili gating dei test e lint [APERTO]
+Correggi DOC-3 usando un letterale non approssimazione di PI e applica
+cfg(test) al modulo test di src/lib.rs. Verifica enumerazione dei test, check
+normale e clippy; niente soppressioni globali o refactoring.
+
+RISP-22 - Riallineare manuali e docstring al codice attuale [APERTO]
+Aggiorna README e le docstring atom/identita sulle API attuali di main, senza
+anticipare la facciata del branch. Elenca poi soltanto le sezioni obsolete di
+architettura-interprete.typ da correggere separatamente. Non cambiare codice
+funzionale.
+
+RISP-23 - Aggiungere CI ripetibile senza benchmark fragili [MIGLIORIA]
+Prepara CI per check, test/doctest e build/test perf-alloc. Non eseguire
+benchmark temporali come gate. Se fmt/clippy richiedono pulizia preesistente,
+separala dai fix funzionali e non aggiungere allow globali.
+
+RISP-24 - Decidere le regole di conversione numerica e substring [DECISIONE]
+Per INT-17 proponi una tabella breve dei contratti di string-to-number e
+substring: non-finiti, esponenti, indici fuori range/frazionari. Distingui bug
+da compatibilita Emacs. Non implementare prima della scelta.
+
+RISP-25 - Progettare la raccolta dei cicli senza invalidare closure vive [COORDINARE]
+Progetta INT-6 senza codice: mappa cicli e radici di Env, Lambda, fiber, atom,
+Native e valori trattenuti dall'host. Confronta due strategie di raccolta,
+durata delle closure e concorrenza. Coordina con il branch interfaccia, senza
+modificarlo.
+
+RISP-26 - Verificare profondita residua negli oggetti runtime [VERIFICA]
+Verifica INT-4 residuo: distruzione di catene profonde acicliche di atom,
+ambienti e closure. Usa subprocess protetti, separa stack overflow da
+cicli/leak e non modificare il modello di memoria prima di una riproduzione.
+
+RISP-27 - Definire quote e indipendenza fra VM [COORDINARE]
+Progetta quote e budget per istanza senza implementare la facciata: distingui
+TLS, VM annidate, cleanup, spawn, dimensioni e profondita. Nessun vincolo
+dell'editor. Proponi il contratto da condividere col branch interfaccia.
+
+RISP-28 - Definire risultato e ciclo di vita di spawn [COORDINARE]
+Per INT-18 proponi prima il contratto spawn compatibile col branch interfaccia:
+nil canonico oppure handle con risultato/errore e lifecycle. Indica la patch
+minima sul main; non introdurre scheduler, join o nuove API senza accordo.
+
+RISP-29 - Uniformare errori e diagnostica pubblica [COORDINARE]
+Progetta il contratto diagnostico sul main coordinandolo al branch: ParserError
+e gia pubblico. Distingui EOF/input incompleto, posizioni, Display/Error e
+cause oggi confuse in UncorrectFunctionDefinition. Non cambiare ancora le API.
+
+RISP-30 - Definire aggiornamenti atomici degli atom [DECISIONE]
+Progetta INT-21: confronta compare-and-set e swap, specificando confronto,
+risultati, retry ed effetti. Evita callback Lisp sotto un lock non rientrante e
+preserva drop fuori lock. Prima il contratto, poi una sola primitiva.
+
+RISP-31 - Tenere il rifacimento della facciata nel branch dedicato [ALTRO BRANCH]
+Quando ti fornisco branch e commit della nuova interfaccia, confrontali con
+main e prepara solo una checklist di migrazione dei fix gia applicati. Non
+reimplementare la facciata nel main e non modificare branch o repository.
+
+RISP-32 - Ottimizzazioni soltanto dopo misure stabili [FUTURO]
+Ottimizza un solo hotspot nelle stringhe, iniziando dalle copie di
+expect_string. Mantieni semantica e API; misura A/B con tempi e allocazioni
+separati, senza PERF_BLESS su B. Riporta anche regressioni, non solo
+allocazioni risparmiate.
+
+RISP-33 - Contenere la crescita dell’interner dei simboli [COORDINARE]
+Analizza obarray/intern in src/lispexp.rs: proponi interner globale con sweep
+oppure per VM, distinguendo chiavi trattenute, simboli vivi, nil/t ed eq fra
+thread. Coordina il modello col branch interfaccia; per ora niente codice.
+
+
+
+
+RISP - RAPPORTO PROBLEMI E PIANO DI INTERVENTO
+============================================
+
+Data della scansione: 12 novembre 2026
+Repository: https://github.com/lmascelli/risp
+Ramo analizzato: main
+Commit: ef14c21e79a96bec909bc9530927f7951f502cb7
+Ultimo commit: updated todo.txt, 9 novembre 2026
+
+SCOPO E METODO
+Questo TXT sostituisce il rapporto dei problemi di Risp come documento di
+lavoro. Riguarda l'interprete autonomo, non le funzioni dell'editor. Conserva
+la corrispondenza con tutti gli ID del vecchio doc/rapporto-problemi.typ.
+Il vecchio rapporto contiene riproduzioni su f1ec558: non sono risultati
+misurati di nuovo sul main attuale. Qui le evidenze sono letture del codice,
+dei test e del todo aggiornati; non ho eseguito test, benchmark, clippy o
+programmi Lisp durante questa scansione. Non ho modificato il repository.
+
+Il rifacimento dell'interfaccia avanza in un altro branch. Non ne sono stati
+ispezionati codice o nome: non prometto assenza di conflitti di merge.
+Impatto basso/medio/alto indica quanto la modifica tocca contratti o file
+condivisi, non una compatibilita verificata col branch sconosciuto.
+
+STATI
+APERTO: il percorso problematico e ancora presente nel codice letto.
+PARZIALE: una parte e corretta; la scheda indica cio che rimane.
+DECISIONE: serve fissare il contratto; una differenza da Emacs non basta
+           per dichiarare un bug di Risp.
+VERIFICA: rischio da riprodurre, non difetto dimostrato in questa scansione.
+COORDINARE: progettazione da condividere col branch dell'interfaccia.
+ALTRO BRANCH: lavoro gia assegnato altrove, da non duplicare.
+MIGLIORIA/FUTURO: funzionalita o qualita, distinta dai bug attuali.
+P1: correttezza, controllo delle risorse o sicurezza del ciclo di vita.
+P2: semantica, diagnostica e qualita ordinaria. P3: prestazioni rinviate.
+Le schede risolte nell'appendice sono correzioni presenti nel codice,
+non una certificazione ottenuta eseguendo oggi la suite.
+
+COME USARE I PROMPT CON POCHI TOKEN
+In una nuova chat incolla soltanto l'intestazione BASE qui sotto e il PROMPT
+di una scheda. Non incollare tutto il rapporto. La spiegazione estesa resta
+qui per consultazione; i percorsi/funzioni nel prompt limitano la scansione.
+Un ID isolato non identifica il lavoro in una chat che non ha questo file.
+Nella stessa chat puoi richiamare l'ID quando la scheda e gia nel contesto.
+Dopo ogni patch annota il commit effettivamente applicato e lo stato.
+
+BASE (da incollare una volta per nuova chat)
+Lavora su https://github.com/lmascelli/risp, main aggiornato. Un solo punto.
+Non modificare il mio checkout: prepara una patch su copia temporanea.
+Mantieni le API salvo la modifica esplicitamente richiesta; non toccare
+il branch dell'interfaccia. Leggi prima solo i percorsi indicati. Niente
+refactoring, nuove dipendenze o formattazione dell'intero repository.
+Aggiungi ed esegui test mirati; niente benchmark salvo richiesta. Per i fix
+rispondi con patch, commit base, verifiche reali e massimo cinque righe.
+Per la progettazione: proposta sintetica senza patch o cambiamenti.
+
+ORDINE CONSIGLIATO
+Ogni blocco contiene due o tre punti, da eseguire UNO ALLA VOLTA.
+Non sono scadenze: backquote e chiamate possono richiedere piu sessioni.
+Non serve completare tutto prima di ottenere miglioramenti sul main.
+
+Blocco A: RISP-01, RISP-03, RISP-20 (guardie, binding, inventario test).
+Blocco B: RISP-04, RISP-05 (aggiornamento di liste).
+Blocco C: RISP-06, RISP-07 (identita e code condivise).
+Blocco D: RISP-02, RISP-15 (macro e arita).
+Blocco E: RISP-11, RISP-12 (numeri e delimitatori; poi chiudere RISP-20).
+Blocco F: RISP-08, RISP-09, RISP-10 (chiamate uniformi).
+Blocco G: RISP-13, RISP-14 (backquote, una parte per volta).
+Blocco H: RISP-17, RISP-18, RISP-19 (bootstrap e fuel delle primitive).
+Blocco I: RISP-21, RISP-22, RISP-23 (qualita, documentazione e CI).
+Decisioni linguistiche a parte: RISP-16, RISP-24, RISP-30.
+Da coordinare: RISP-25/26/27/28/29/31/33, senza duplicare la facciata.
+Prestazioni successive: RISP-32. Nessuna ottimizzazione e obbligatoria ora.
+
+INDICE DELLE SCHEDE
+RISP-01 [P1; APERTO] Vincolare FuelScope al thread di creazione
+RISP-02 [P1; APERTO] Passare alle macro argomenti manipolabili come dati
+RISP-03 [P2; PARZIALE] Completare la protezione dei nomi riservati nei binding
+RISP-04 [P1; APERTO] Aggiornare la lista nell'ambiente che possiede il binding
+RISP-05 [P2; APERTO] Eliminare duplicati fra i nuovi elementi delle liste
+RISP-06 [P1; APERTO] Distinguere identita e uguaglianza nelle ricerche
+RISP-07 [P2; APERTO] Restituire la coda originale da member e memq
+RISP-08 [P1; PARZIALE] Uniformare gli alias nelle chiamate nominate
+RISP-09 [P2; APERTO] Accettare Primitive nelle chiamate con testa calcolata
+RISP-10 [P2; APERTO] Verificare realmente la chiamabilita in functionp
+RISP-11 [P2; APERTO] Completare la grammatica dei numeri del lettore
+RISP-12 [P2; APERTO] Chiudere i simboli sui delimitatori corretti
+RISP-13 [P2; PARZIALE] Espandere code puntate e mappe nel backquote
+RISP-14 [P2; APERTO] Contare i livelli di backquote e unquote
+RISP-15 [P2; APERTO] Rifiutare argomenti in eccesso dove la firma e fissa
+RISP-16 [P2; DECISIONE] Non ignorare forme aggiuntive nel ramo else di if
+RISP-17 [P2; APERTO] Isolare e completare la verifica di bootstrap
+RISP-18 [P1; APERTO] Addebitare le visite prima di materializzare liste
+RISP-19 [P1; PARZIALE] Addebitare il lavoro di make-string prima dell'allocazione
+RISP-20 [P2; APERTO] Recuperare le regressioni del lettore escluse dalla suite
+RISP-21 [P2; APERTO] Rendere affidabili gating dei test e lint
+RISP-22 [P2; APERTO] Riallineare manuali e docstring al codice attuale
+RISP-23 [P2; MIGLIORIA] Aggiungere CI ripetibile senza benchmark fragili
+RISP-24 [P2; DECISIONE] Decidere le regole di conversione numerica e substring
+RISP-25 [P1; COORDINARE] Progettare la raccolta dei cicli senza invalidare closure vive
+RISP-26 [P2; VERIFICA] Verificare profondita residua negli oggetti runtime
+RISP-27 [P1; COORDINARE] Definire quote e indipendenza fra VM
+RISP-28 [P2; COORDINARE] Definire risultato e ciclo di vita di spawn
+RISP-29 [P2; COORDINARE] Uniformare errori e diagnostica pubblica
+RISP-30 [P2; DECISIONE] Definire aggiornamenti atomici degli atom
+RISP-31 [P2; ALTRO BRANCH] Tenere il rifacimento della facciata nel branch dedicato
+RISP-32 [P3; FUTURO] Ottimizzazioni soltanto dopo misure stabili
+RISP-33 [P2; COORDINARE] Contenere la crescita dell’interner dei simboli
+
+SCHEDE DETTAGLIATE
+==============================================================================
+
+RISP-01 - Vincolare FuelScope al thread di creazione
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P1 | Impatto: basso
+Riferimenti precedenti: nuovo; politica delle risorse
+Dipendenze: nessuna
+
+Dove
+src/fuel.rs: FuelScope, FuelMeter::begin e Drop for FuelScope
+
+Problema ed evidenza
+FuelScope contiene soltanto un campo unitario e risulta trasferibile tra
+thread. Il suo Drop decrementa invece DEPTH nel TLS del thread che esegue la
+distruzione. Spostare la guardia puo lasciare attiva la profondita sul thread
+originale e modificare quella di un altro thread: le successive ricariche non
+seguono piu il contratto.
+
+Direzione proposta
+Aggiungere un marker privato che renda la guardia non Send e non Sync. Non
+cambiare consumi, budget o il comportamento dei rientri. La separazione dei
+budget tra VM e un problema distinto, RISP-27.
+
+Criteri di completamento
+Il trasferimento tra thread non compila; i rientri sullo stesso thread non
+ricaricano e un nuovo scope esterno ricarica come prima.
+
+PROMPT BREVE
+In src/fuel.rs rendi FuelScope non Send/non Sync con un marker privato.
+Preserva rientri e budget. Aggiungi un doctest compile_fail sul trasferimento
+fra thread e verifica i test fuel mirati.
+
+
+RISP-02 - Passare alle macro argomenti manipolabili come dati
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P1 | Impatto: medio
+Riferimenti precedenti: nuovo; incoerenze del linguaggio nel todo
+Dipendenze: nessuna
+
+Dove
+src/eval.rs: eval_macro_or_function_call_step; src/utils.rs: bind_lambda_args;
+src/parser.rs: form_to_data
+
+Problema ed evidenza
+Gli argomenti non vengono valutati, correttamente, ma sono legati direttamente
+come nodi di sintassi. Una lista eseguibile Form non e una lista Cons: car/cdr
+e altre primitive sui dati non possono destrutturarla come il codice della
+macro si aspetta. Il fatto che il backquote funzioni nei casi semplici non
+risolve questa differenza.
+
+Direzione proposta
+Convertire gli argomenti in dati nel solo percorso di espansione, rispettando
+quote, vettori e mappe. Non modificare il binding delle funzioni ordinarie.
+L'espansione risultante deve continuare nell'ambiente del chiamante senza
+valutare anticipatamente gli argomenti.
+
+Criteri di completamento
+Una macro puo leggere con car/cdr un argomento come (+ 1 2); gli effetti
+collaterali dell'argomento non avvengono durante il binding; quote e &rest
+restano corretti.
+
+PROMPT BREVE
+Correggi eval_macro_or_function_call_step: gli argomenti delle macro devono
+essere dati destrutturabili con car/cdr, senza valutazione anticipata. Copri
+quote, optional/rest ed espansione nel chiamante. Non cambiare
+bind_lambda_args per le funzioni.
+
+
+RISP-03 - Completare la protezione dei nomi riservati nei binding
+------------------------------------------------------------------------------
+Stato: PARZIALE | Priorita: P2 | Impatto: medio
+Riferimenti precedenti: INT-22, parte residua
+Dipendenze: nessuna
+
+Dove
+src/eval.rs: setq, parse_let_binding, defvar/defconst e variabili di
+dolist/dotimes; src/utils.rs: parse_lambda_params
+
+Problema ed evidenza
+La protezione di t, nil e keyword esiste nei parametri delle lambda, ma non in
+tutti gli altri binding. let, setq e definizioni possono ancora creare valori
+che la valutazione ordinaria del simbolo non legge, poiche questi nomi vengono
+riconosciuti come costanti prima della ricerca nell'ambiente.
+
+Direzione proposta
+Condividere internamente il controllo dei nomi e applicarlo ai costrutti che
+creano o aggiornano binding Lisp. Non vietare genericamente nomi che sembrano
+speciali e non cambiare il tipo dei valori. Conservare il comportamento
+corretto dei parametri gia protetti.
+
+Criteri di completamento
+t, nil e :keyword sono rifiutati nei binding indicati con un errore
+comprensibile; le variabili ordinarie e i parametri optional/rest continuano a
+funzionare.
+
+PROMPT BREVE
+Completa INT-22 in src/eval.rs: rifiuta t/nil/keyword in setq, let/let*,
+defvar/defconst e variabili dolist/dotimes. Riusa un controllo interno;
+mantieni le API pubbliche e aggiungi regressioni per ciascun costrutto.
+
+
+RISP-04 - Aggiornare la lista nell'ambiente che possiede il binding
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P1 | Impatto: basso
+Riferimenti precedenti: INT-15, ambiente
+Dipendenze: nessuna
+
+Dove
+src/base/lists.rs: primitive_add_to_list, primitive_append_to_list,
+primitive_remove_from_list
+
+Problema ed evidenza
+Le tre primitive cercano la lista risalendo gli ambienti, poi salvano il
+risultato con set_variable nell'ambiente corrente. Una chiamata dentro una
+funzione puo quindi creare una copia locale e lasciare invariato il binding
+globale. La correzione di setq non corregge queste primitive.
+
+Direzione proposta
+Aggiornare il binding esistente piu vicino mediante update_variable.
+Preservare lo shadowing locale, il valore restituito e la firma variadica gia
+documentata. Non introdurre in questa modifica la firma Emacs con un flag
+APPEND.
+
+Criteri di completamento
+Una chiamata annidata aggiorna il binding esterno; un let che oscura la lista
+modifica soltanto la propria lista. I tre percorsi e le condizioni di errore
+sono coperti.
+
+PROMPT BREVE
+Correggi INT-15 in src/base/lists.rs: add/append/remove-from-list aggiornino
+il binding esistente piu vicino. Conserva firme &rest e valori restituiti.
+Verifica ambiente globale, scope annidato e shadowing locale.
+
+
+RISP-05 - Eliminare duplicati fra i nuovi elementi delle liste
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P2 | Impatto: basso
+Riferimenti precedenti: INT-15, duplicati e diagnostica
+Dipendenze: RISP-04 consigliato
+
+Dove
+src/base/lists.rs: primitive_add_to_list, primitive_append_to_list e messaggio
+di primitive_remove_from_list
+
+Problema ed evidenza
+Le aggiunte controllano i nuovi elementi soltanto contro il vettore existing.
+Due elementi uguali presenti nella stessa chiamata possono essere inseriti
+entrambi. remove-from-list usa inoltre un messaggio che nomina add-to-list. La
+prepensione multipla inverte l'ordine degli elementi: e un comportamento da
+preservare o cambiare consapevolmente, non un motivo per cambiare
+implicitamente la firma.
+
+Direzione proposta
+Controllare anche gli elementi gia accettati nella stessa operazione;
+conservare per ora l'ordine documentato/esistente e specificarlo nei test.
+Correggere il nome nel messaggio di errore.
+
+Criteri di completamento
+Le aggiunte ripetute nella stessa chiamata non duplicano valori; quelli gia
+presenti restano unici. Ordine, confronto equal e valore restituito sono
+espliciti.
+
+PROMPT BREVE
+In src/base/lists.rs elimina i duplicati fra argomenti di add-to-list e
+append-to-list. Mantieni la firma e l'ordine attuale, documentandolo. Correggi
+anche il messaggio remove-from-list che nomina add-to-list.
+
+
+RISP-06 - Distinguere identita e uguaglianza nelle ricerche
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P1 | Impatto: basso
+Riferimenti precedenti: INT-16, confronto
+Dipendenze: nessuna
+
+Dove
+src/base/lists.rs: primitive_memq/primitive_assq; src/base/mod.rs:
+find_member/find_assoc; src/base/predicates.rs: primitive_eq_impl
+
+Problema ed evidenza
+memq/member e assq/assoc chiamano rispettivamente lo stesso helper con
+confronto strutturale. Due oggetti distinti ma equal sono quindi trovati anche
+dalla variante destinata all'identita. Le docstring parlano ancora di eq
+strutturale, mentre eq e stato corretto.
+
+Direzione proposta
+Usare per memq/assq la stessa relazione adottata da eq, senza duplicare regole
+che poi divergano per Native, atom o fiber. Tenere equal per member/assoc. La
+condivisione della coda e separata in RISP-07.
+
+Criteri di completamento
+Oggetti distinti ma equal sono trovati da member/assoc e non da memq/assq;
+cloni dello stesso oggetto sono trovati. Coprire almeno liste, stringhe e
+fiber.
+
+PROMPT BREVE
+Correggi INT-16: memq/assq usino la relazione di eq, member/assoc mantengano
+equal. Condividi il confronto internamente con predicates.rs, aggiorna
+docstring e verifica oggetti uguali ma distinti e identici.
+
+
+RISP-07 - Restituire la coda originale da member e memq
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P2 | Impatto: basso
+Riferimenti precedenti: INT-16, condivisione e copie
+Dipendenze: RISP-06
+
+Dove
+src/base/mod.rs: find_member; src/base/lists.rs: member e memq
+
+Problema ed evidenza
+find_member materializza la lista con expect_list e ricostruisce la coda con
+proper_list(list[pos..].to_vec()). Il contenuto appare corretto, ma l'identita
+della coda viene persa e si alloca una nuova lista. Questo e osservabile
+attraverso eq.
+
+Direzione proposta
+Percorrere direttamente le cons e restituire un clone del riferimento alla
+cella trovata. Conservare il confronto scelto e contabilizzare il lavoro
+realmente visitato. Stabilire esplicitamente come trattare una coda puntata
+senza estendere di nascosto il contratto.
+
+Criteri di completamento
+Per l=(1 2 3), la coda trovata da member per 2 e eq a cdr(l). Una ricerca
+fallita restituisce nil; nessuna nuova cons viene costruita per il risultato.
+
+PROMPT BREVE
+Riscrivi find_member come cammino sulle Cons: member/memq restituiscano la
+coda originale condivisa, non una copia. Conserva i confronti distinti e il
+fuel per elemento visitato; verifica identita del risultato e fallimento.
+
+
+RISP-08 - Uniformare gli alias nelle chiamate nominate
+------------------------------------------------------------------------------
+Stato: PARZIALE | Priorita: P1 | Impatto: medio
+Riferimenti precedenti: uniformazione chiamate; correzione alias gia parziale
+Dipendenze: nessuna
+
+Dove
+src/base/mod.rs: call_callable; src/eval.rs: eval_function_call_step
+
+Problema ed evidenza
+call_callable risolve gia catene di alias con rilevamento dei cicli. La
+chiamata Lisp nominata legge invece il binding e accetta solo Lambda,
+Primitive o Native: un Symbol che rimanda a un'altra funzione viene rifiutato.
+Lo stesso binding si comporta diversamente secondo il punto d'ingresso.
+
+Direzione proposta
+Condividere la risoluzione, mantenendo il trampolino del valutatore: delegare
+indiscriminatamente ogni chiamata a call_callable puo trasformare una chiamata
+in coda in ricorsione Rust. Non riscrivere l'interfaccia pubblica.
+
+Criteri di completamento
+Aliases validi funzionano da chiamata nominata e funcall; cicli e target
+assenti falliscono in modo coerente. Una ricorsione in coda attraverso un
+alias non fa crescere lo stack.
+
+PROMPT BREVE
+Allinea eval_function_call_step alla risoluzione alias gia presente in
+call_callable. Riusa il resolver senza perdere il trampolino delle lambda.
+Verifica catene, cicli, nome del target assente e ricorsione in coda.
+
+
+RISP-09 - Accettare Primitive nelle chiamate con testa calcolata
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P2 | Impatto: medio
+Riferimenti precedenti: uniformazione chiamate
+Dipendenze: nessuna
+
+Dove
+src/eval.rs: eval_step_permitted, match sulla testa di Form
+
+Problema ed evidenza
+Una testa Form viene valutata e reinserita come testa di una nuova chiamata.
+Il match gestisce poi Lambda e Native, ma non Primitive. Un host che
+restituisce un valore Primitive puo chiamarlo via funcall/call_callable e non
+tramite una testa calcolata.
+
+Direzione proposta
+Completare il dispatch interno per Primitive, senza rivalutare gli argomenti e
+senza alterare lambda, Native e backtrace. Non introdurre una nuova facciata
+Risp.
+
+Criteri di completamento
+Una testa calcolata che produce Primitive e chiamabile; gli argomenti sono
+valutati una volta. Gli errori di tipo e di arita rimangono coerenti.
+
+PROMPT BREVE
+In eval_step_permitted gestisci una testa calcolata che produce
+LispExp::Primitive, come gia avviene per Lambda/Native. Verifica argomenti
+valutati una sola volta e dispatch coerente con funcall; preserva backtrace e
+TCO.
+
+
+RISP-10 - Verificare realmente la chiamabilita in functionp
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P2 | Impatto: basso
+Riferimenti precedenti: uniformazione chiamate e predicati
+Dipendenze: RISP-08
+
+Dove
+src/base/predicates.rs: primitive_functionp; risoluzione in src/base/mod.rs
+
+Problema ed evidenza
+Per un simbolo functionp usa soltanto env.get_function(name).is_some().
+Restituisce quindi vero anche se il binding contiene un numero o se la catena
+di alias non porta a un callable valido. Env::set_function e pubblica e
+permette questi valori.
+
+Direzione proposta
+Far seguire al predicato le regole della risoluzione concordata, senza
+invocare la funzione. Decidere e documentare se un alias invalido dia nil o un
+errore; per un predicato e preferibile nil.
+
+Criteri di completamento
+Lambda, Primitive e Native sono riconosciuti; binding non callable, alias
+assenti e ciclici non danno un falso positivo e non vengono eseguiti.
+
+PROMPT BREVE
+Correggi primitive_functionp: per i simboli verifica il callable risolto, non
+la sola presenza del binding. Restituisci nil per alias invalidi/ciclici senza
+eseguirli. Riusa il resolver interno e copri Lambda, Primitive e Native.
+
+
+RISP-11 - Completare la grammatica dei numeri del lettore
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P2 | Impatto: medio
+Riferimenti precedenti: LET-4; parte di INT-17
+Dipendenze: nessuna
+
+Dove
+src/parser.rs: stati InDotStart/InNumber/InNumberAfterDot;
+src/base/strings.rs: string-to-number
+
+Problema ed evidenza
+InDotStart usa ancora 0..9 con estremo escluso, quindi .9 non segue il
+percorso di .5. Il segno positivo e l'esponente non sono gestiti dalla
+macchina numerica. string-to-number usa invece il parser f64 di Rust: i due
+ingressi accettano insiemi diversi.
+
+Direzione proposta
+Correggere .9 e aggiungere numeri finiti con + ed esponente. Preservare
+simboli come +, -, 1+ e nomi contenenti cifre. Non decidere incidentalmente
+qui la politica di NaN/infinito, rinviata a RISP-24. Conservare il recupero
+dopo token malformati.
+
+Criteri di completamento
+.9, +5, 1e5 e 2.5e-3 diventano numeri; simboli e token malformati sono
+distinti; segni, esponenti incompleti, EOF e recupero sono coperti.
+
+PROMPT BREVE
+Correggi LET-4 in src/parser.rs: supporta .9, +5 ed esponenti finiti,
+preservando +, -, 1+ e simboli alfanumerici. Mantieni recupero e limite di
+profondita. Copri token validi, esponenti incompleti ed EOF.
+
+
+RISP-12 - Chiudere i simboli sui delimitatori corretti
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P2 | Impatto: medio
+Riferimenti precedenti: LET-5, parte lessicale
+Dipendenze: RISP-11 consigliato
+
+Dove
+src/parser.rs: InSymbol, delimitatori e discard_numeric_tail
+
+Problema ed evidenza
+InSymbol ignora CR invece di terminare il token, percio foo CR bar diventa
+foobar. Virgolette, apici e virgole possono finire dentro lo stesso simbolo
+anche quando introducono una nuova forma. Il lettore e il recupero dei token
+devono condividere una decisione coerente sui confini.
+
+Direzione proposta
+Trattare CR come whitespace e i prefissi/virgolette come delimitatori senza
+consumare il token successivo. Aggiornare il recupero numerico se necessario.
+Il supporto di #' e ?a e una scelta separata, non richiesta per questo fix.
+
+Criteri di completamento
+CR separa foo e bar; una stringa o un prefisso adiacente inizia un nuovo
+token. Commenti, CRLF e recupero da errore non perdono caratteri.
+
+PROMPT BREVE
+Correggi InSymbol in src/parser.rs: CR come spazio; virgolette, apici,
+backquote e virgole terminino il simbolo senza perdere il token seguente.
+Allinea discard_numeric_tail; copri adiacenza, commenti e CRLF. Non aggiungere
+#' o caratteri.
+
+
+RISP-13 - Espandere code puntate e mappe nel backquote
+------------------------------------------------------------------------------
+Stato: PARZIALE | Priorita: P2 | Impatto: medio
+Riferimenti precedenti: INT-11, strutture
+Dipendenze: nessuna
+
+Dove
+src/eval.rs: eval_backquote; src/parser.rs: Mode::Template e Tail
+
+Problema ed evidenza
+Il cammino di espansione e gia iterativo, ma visita solo Form e Vector. Cons e
+Map passano nel ramo che clona il valore: unquote nelle code puntate o nei
+valori delle mappe resta quindi non espanso. Non occorre riscrivere il
+backquote per togliere la ricorsione: quella parte e gia stata fatta.
+
+Direzione proposta
+Estendere la pila di task esistente alle strutture mancanti. Conservare ordine
+degli effetti e dati quotati; definire dove uno splice e ammesso. Non tentare
+contemporaneamente la gestione completa dei livelli annidati.
+
+Criteri di completamento
+Con b=2, `(a . ,b) produce (a . 2) e una mappa con valore ,b contiene 2.
+Splice invalido interrompe prima degli effetti successivi; la visita resta
+iterativa.
+
+PROMPT BREVE
+Estendi eval_backquote iterativo a Cons/code puntate e valori Map. Preserva
+ordine degli unquote e dati quotati; rifiuta splice in posizioni non ammesse.
+Non modificare ancora i livelli di backquote annidati.
+
+
+RISP-14 - Contare i livelli di backquote e unquote
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P2 | Impatto: medio
+Riferimenti precedenti: INT-11, annidamento
+Dipendenze: RISP-13
+
+Dove
+src/eval.rs: eval_backquote; src/parser.rs: gestione dei prefissi Template
+
+Problema ed evidenza
+L'espansione riconosce unquote senza tenere una profondita di quasiquote.
+Dentro un backquote annidato puo quindi valutare un unquote troppo presto
+oppure produrre forme che falliscono piu tardi come chiamate a unquote.
+
+Direzione proposta
+Definire una profondita esplicita nella visita iterativa, con incremento su
+backquote e decremento su unquote. Valutare/splicare solo al livello attivo;
+preservare quelli protetti da un livello interno.
+
+Criteri di completamento
+Template a due e tre livelli conservano gli unquote interni fino
+all'espansione corretta; gli effetti avvengono al momento previsto e una
+singola espansione gia valida non cambia.
+
+PROMPT BREVE
+Completa INT-11: aggiungi la profondita di quasiquote ai task di
+eval_backquote, valutando unquote/splice solo al livello attivo. Mantieni
+visita iterativa e copri due/tre livelli con effetti collaterali osservabili.
+
+
+RISP-15 - Rifiutare argomenti in eccesso dove la firma e fissa
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P2 | Impatto: basso
+Riferimenti precedenti: nuovo; contratto delle primitive
+Dipendenze: nessuna
+
+Dove
+src/base/atoms.rs: make-atom/deref/reset; src/base/fibers.rs:
+resume/fiber-done-p; altri casi solo se equivalenti
+
+Problema ed evidenza
+Alcune primitive controllano solo un numero minimo oppure args.first():
+accettano e ignorano argomenti aggiuntivi non previsti dalla firma. Gli
+argomenti ignorati possono essere stati comunque valutati e avere effetti,
+rendendo l'errore difficile da riconoscere.
+
+Direzione proposta
+Applicare exact_arity alle firme effettivamente fisse. Non estendere il
+cambiamento a funzioni con ignoranza degli extra gia documentata, come eval,
+senza una decisione separata. Conservare messaggi e valori per chiamate
+valide.
+
+Criteri di completamento
+Ogni primitiva indicata accetta la propria arita e rifiuta sia difetti sia
+eccessi. Le firme variadiche non vengono ristrette per analogia.
+
+PROMPT BREVE
+Valida l'arita esatta di make-atom, deref, reset, resume e fiber-done-p
+secondo le docstring. Usa exact_arity, copri argomenti mancanti/eccessivi e
+non cambiare funzioni variadiche o contratti diversi documentati.
+
+
+RISP-16 - Non ignorare forme aggiuntive nel ramo else di if
+------------------------------------------------------------------------------
+Stato: DECISIONE | Priorita: P2 | Impatto: medio
+Riferimenti precedenti: INT-24
+Dipendenze: nessuna
+
+Dove
+src/eval.rs: ramo if ed eval_body_step
+
+Problema ed evidenza
+Il ramo if usa soltanto args[2] quando la condizione e falsa; le forme
+successive sono ignorate senza errore. Questo puo lasciare aggiornamenti o
+cleanup ineseguiti. La scelta tra un if strettamente ternario e un else
+implicito a piu forme appartiene al linguaggio Risp, non all'editor.
+
+Direzione proposta
+Consiglio: se si desidera il contratto gia usato da codice simile a Emacs
+Lisp, eseguire tutte le forme else con eval_body_step. Altrimenti rifiutare
+l'arita in eccesso. Decidere prima di preparare la correzione.
+
+Criteri di completamento
+Nessuna forma in eccesso e ignorata silenziosamente; il contratto scelto
+specifica valore finale, effetti, posizione di coda e comportamento di yield.
+
+PROMPT BREVE
+Analizza INT-24 nel ramo if: proponi in poche righe else multiplo oppure arita
+massima tre e le conseguenze su TCO/yield. Non implementare prima che scelga
+il contratto.
+
+
+RISP-17 - Isolare e completare la verifica di bootstrap
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P2 | Impatto: basso
+Riferimenti precedenti: INT-19; parte di INT-20
+Dipendenze: nessuna
+
+Dove
+src/handshake.rs: bootstrap_vm e verification_script
+
+Problema ed evidenza
+La verifica scrive verify-math, verify-fiber e fiber-step nell'ambiente
+restituito. La fiber di prova viene lasciata dopo il primo yield. Un semplice
+ambiente figlio non basta a isolare nuovi setq, poiche ora setq crea i nomi
+assenti nella radice.
+
+Direzione proposta
+Usare binding locali espliciti o un ambiente di verifica realmente separato.
+Completare la fiber di prova, controllandone anche il secondo risultato, e non
+lasciare oggetti sospesi trattenuti dal bootstrap. Rendere il fallimento
+leggibile con gli errori gia disponibili.
+
+Criteri di completamento
+L'ambiente restituito non contiene i tre nomi; la verifica esercita
+sospensione e completamento; errori di verifica hanno un messaggio pertinente.
+
+PROMPT BREVE
+Correggi bootstrap_vm: niente verify-math/verify-fiber/fiber-step globali,
+completa la fiber di prova e descrivi i fallimenti. Usa binding locali
+espliciti: un Env figlio non isola setq di nomi nuovi. Mantieni la firma
+pubblica.
+
+
+RISP-18 - Addebitare le visite prima di materializzare liste
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P1 | Impatto: basso
+Riferimenti precedenti: INT-13/15, contabilizzazione delle risorse
+Dipendenze: nessuna
+
+Dove
+src/base/mod.rs: expect_list; src/base/lists.rs: operazioni che visitano liste
+
+Problema ed evidenza
+expect_list raccoglie tutta la lista in un Vec e soltanto dopo addebita il
+fuel. Un budget quasi esaurito non impedisce la scansione e l'allocazione
+preliminare. Alcune operazioni di aggiornamento delle liste non addebitano
+neppure il proprio cammino.
+
+Direzione proposta
+Addebitare progressivamente prima del lavoro significativo. Non confondere
+numero di confronti strutturali con costo costante: confrontare elementi
+profondi puo costare molto piu di una singola riduzione. Stabilire una
+contabilizzazione documentata e verificabile senza allargare in una sola patch
+tutte le primitive.
+
+Criteri di completamento
+Un fuel minimo interrompe una visita lunga prima della materializzazione
+completa. L'input non viene modificato al fallimento e il costo per elemento e
+esplicito.
+
+PROMPT BREVE
+In expect_list addebita fuel durante la visita, prima di accumulare l'intera
+lista. Copri esaurimento precoce e input invariato. Aggiorna solo le
+aspettative di contabilizzazione direttamente coinvolte; non rifare tutte le
+primitive.
+
+
+RISP-19 - Addebitare il lavoro di make-string prima dell'allocazione
+------------------------------------------------------------------------------
+Stato: PARZIALE | Priorita: P1 | Impatto: basso
+Riferimenti precedenti: INT-13, fuel
+Dipendenze: nessuna
+
+Dove
+src/base/strings.rs: primitive_make_string; src/fuel.rs: contratto dei consumi
+
+Problema ed evidenza
+I controlli di overflow e try_reserve_exact sono gia presenti. Il ciclo di
+riempimento ignora pero il contesto e puo effettuare miliardi di iterazioni.
+Una prenotazione riuscita non e una quota di memoria, e i sistemi con
+overcommit possono terminare il processo quando le pagine vengono
+effettivamente riempite.
+
+Direzione proposta
+Addebitare il lavoro proporzionale prima della prenotazione/riempimento e
+gestire conteggi che superano u32 senza saturare rendendo illimitato il
+lavoro. Preservare UTF-8, comportamento del conteggio negativo e controlli di
+capacita. Le quote configurabili di memoria restano RISP-27.
+
+Criteri di completamento
+Un host con poco fuel rifiuta una grande richiesta prima di allocare. UTF-8 e
+limiti aritmetici restano corretti. Il contesto non metered resta
+esplicitamente privo di una quota, non viene dichiarato sicuro contro ogni
+esaurimento.
+
+PROMPT BREVE
+Completa il fuel di make-string prima di allocare/riempire, senza saturazioni
+che autorizzino lavoro illimitato oltre u32. Mantieni checked_mul,
+try_reserve_exact, UTF-8 e contratto dei conteggi. Non introdurre nuove quote
+pubbliche.
+
+
+RISP-20 - Recuperare le regressioni del lettore escluse dalla suite
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P2 | Impatto: basso
+Riferimenti precedenti: DOC-2
+Dipendenze: nessuna
+
+Dove
+src/tests/mod.rs e src/tests/reader_tests.rs
+
+Problema ed evidenza
+reader_tests.rs esiste ma non e dichiarato nel modulo dei test. Usa ancora
+UnexpectedDot, variante non piu presente, e include aspettative per funzioni
+lessicali ancora mancanti. Un esito positivo di cargo test non include questi
+casi.
+
+Direzione proposta
+Prima inventariare le prove, poi registrare quelle relative a funzionalita
+attuali. Conservare le regressioni per le funzionalita future con un
+collegamento ai rispettivi task; non cambiare le aspettative corrette solo per
+ottenere verde. Un test temporaneamente ignorato deve avere una ragione
+specifica.
+
+Criteri di completamento
+I casi compilabili sulle funzioni correnti sono davvero enumerati da cargo
+test. Nessun test e perso silenziosamente; ogni caso rinviato punta a
+RISP-11/12 o a una decisione documentata.
+
+PROMPT BREVE
+Ripara DOC-2: inventaria reader_tests.rs e registralo in src/tests/mod.rs.
+Aggiorna UnexpectedDot al contratto attuale. Mantieni le regressioni future
+collegate ai relativi task, senza indebolire asserzioni per far passare la
+suite.
+
+
+RISP-21 - Rendere affidabili gating dei test e lint
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P2 | Impatto: basso
+Riferimenti precedenti: DOC-3; riordino delle verifiche
+Dipendenze: nessuna
+
+Dove
+src/tests/parser_tests.rs: test_edge_negative_numbers; src/lib.rs e
+src/tests/mod.rs
+
+Problema ed evidenza
+Il test usa ancora -3.14, che la lint approx_constant tratta come una costante
+matematica approssimata. Inoltre il modulo tests della libreria non e
+interamente protetto da cfg(test): alcuni helper dei test vengono compilati
+anche nel normale build.
+
+Direzione proposta
+Usare un valore neutro come -2.5 e confinare il modulo dei test alla
+configurazione di test. Verificare che nessun codice di produzione dipenda da
+quel modulo e non sopprimere globalmente le lint.
+
+Criteri di completamento
+Il normale cargo check non compila helper di test; la lista dei test attivi
+resta invariata. Clippy non fallisce sul letterale e gli altri eventuali
+problemi sono riportati distintamente.
+
+PROMPT BREVE
+Correggi DOC-3 usando un letterale non approssimazione di PI e applica
+cfg(test) al modulo test di src/lib.rs. Verifica enumerazione dei test, check
+normale e clippy; niente soppressioni globali o refactoring.
+
+
+RISP-22 - Riallineare manuali e docstring al codice attuale
+------------------------------------------------------------------------------
+Stato: APERTO | Priorita: P2 | Impatto: basso
+Riferimenti precedenti: DOC-1; parte documentale di INT-21
+Dipendenze: nessuna
+
+Dove
+README.md; doc/architettura-interprete.typ; man/risp-base-index.txt; docstring
+in src/base
+
+Problema ed evidenza
+README contiene quasi soltanto il nome del progetto. Il manuale architetturale
+contiene ancora percorsi core/src/lisp, un lettore ricorsivo e API/schede
+ormai superate. Le docstring di deref/reset usano (atom 0) come costruttore,
+mentre atom e un predicato. Altre note su identita e alias non sono
+aggiornate.
+
+Direzione proposta
+Dividere il lavoro editoriale in sezioni piccole: ingresso Rust minimo e
+limiti attuali; poi lettore/evaluator; poi primitive. Non pubblicizzare la
+facciata futura come API gia disponibile. Non descrivere difetti aperti come
+garanzie corrette.
+
+Criteri di completamento
+Gli esempi usano le API di main; il manuale non descrive come attuali le
+vecchie implementazioni; gli esempi atom usano make-atom. I task funzionali
+restano separati dal commit documentale.
+
+PROMPT BREVE
+Aggiorna README e le docstring atom/identita sulle API attuali di main, senza
+anticipare la facciata del branch. Elenca poi soltanto le sezioni obsolete di
+architettura-interprete.typ da correggere separatamente. Non cambiare codice
+funzionale.
+
+
+RISP-23 - Aggiungere CI ripetibile senza benchmark fragili
+------------------------------------------------------------------------------
+Stato: MIGLIORIA | Priorita: P2 | Impatto: basso
+Riferimenti precedenti: todo: CI e disciplina dei commit
+Dipendenze: RISP-20/21 consigliati
+
+Dove
+.github/workflows, Cargo.toml e suite dei test
+
+Problema ed evidenza
+Non risultano workflow CI versionati nel main ispezionato. I nuovi test e le
+correzioni manuali non hanno quindi un controllo continuo comune. I benchmark
+temporali sono correttamente separati e non devono diventare un vincolo
+dipendente dal carico del runner.
+
+Direzione proposta
+Configurare check, test e doctest, poi lint/formattazione secondo una baseline
+pulita. Eventuale riordino di formattazione deve essere un commit separato. La
+feature perf-alloc va compilata/verificata senza mescolare i tempi del binario
+strumentato con quelli normali.
+
+Criteri di completamento
+CI esegue le verifiche ripetibili e non i benchmark temporali come gate. Le
+differenze preesistenti sono visibili e non nascoste con allow globali.
+Lockfile e toolchain hanno una politica esplicita.
+
+PROMPT BREVE
+Prepara CI per check, test/doctest e build/test perf-alloc. Non eseguire
+benchmark temporali come gate. Se fmt/clippy richiedono pulizia preesistente,
+separala dai fix funzionali e non aggiungere allow globali.
+
+
+RISP-24 - Decidere le regole di conversione numerica e substring
+------------------------------------------------------------------------------
+Stato: DECISIONE | Priorita: P2 | Impatto: basso
+Riferimenti precedenti: INT-17; parte di LET-5
+Dipendenze: RISP-11 per condividere la grammatica finita
+
+Dove
+src/base/strings.rs: primitive_string_to_number e primitive_substring;
+src/parser.rs: grammatica numerica
+
+Problema ed evidenza
+string-to-number accetta inf/NaN ed esponenti tramite f64::from_str; substring
+normalizza e limita gli indici all'intervallo disponibile. Questi
+comportamenti non sono automaticamente errori perche differiscono da Emacs.
+Serve distinguere una scelta intenzionale da un comportamento accidentale e
+chiarire anche non-finiti e indici frazionari.
+
+Direzione proposta
+Scegliere il contratto, quindi allineare documentazione e prove. Per i numeri
+finiti conviene condividere la grammatica con il lettore. Evitare che il fix
+del lettore cambi implicitamente la possibilita per un host Rust di fornire un
+f64 non finito.
+
+Criteri di completamento
+Esiste una tabella di casi accettati/rifiutati: spazio, esponente, inf/NaN,
+indici negativi, oltre limite e frazionari. Solo dopo la scelta si prepara la
+patch di una singola funzione.
+
+PROMPT BREVE
+Per INT-17 proponi una tabella breve dei contratti di string-to-number e
+substring: non-finiti, esponenti, indici fuori range/frazionari. Distingui bug
+da compatibilita Emacs. Non implementare prima della scelta.
+
+
+RISP-25 - Progettare la raccolta dei cicli senza invalidare closure vive
+------------------------------------------------------------------------------
+Stato: COORDINARE | Priorita: P1 | Impatto: alto
+Riferimenti precedenti: INT-6
+Dipendenze: nessuna
+
+Dove
+src/environment.rs; src/types.rs: Lambda/FiberState/SharedAtom; oggetti Native
+e riferimenti tenuti dall'host
+
+Problema ed evidenza
+Env conserva valori e Lambda conserva un Arc dell'ambiente: si formano cicli
+che non raggiungono mai zero. Anche fiber, atom e callback Native possono
+trattenere altri valori. Il Drop iterativo risolve la profondita di
+distruzione, non la mancata raggiungibilita del distruttore. I contatori della
+suite misurano richieste, non provano che tutta la memoria sia stata liberata.
+
+Direzione proposta
+Prima identificare tutte le radici, compresi valori restituiti e conservati da
+Rust, thread attivi e continuazioni. Confrontare raccolta di cicli e heap
+tracciato, considerando concorrenza e chiusura della VM. Non sostituire
+indiscriminatamente Arc con Weak e non azzerare ambienti che potrebbero essere
+ancora raggiungibili.
+
+Criteri di completamento
+Un modello scritto spiega vita delle closure sfuggite al chiamante, oggetti
+condivisi, arresto della VM e sincronizzazione della raccolta. La soluzione di
+una sessione lunga e distinta dal solo teardown.
+
+PROMPT BREVE
+Progetta INT-6 senza codice: mappa cicli e radici di Env, Lambda, fiber, atom,
+Native e valori trattenuti dall'host. Confronta due strategie di raccolta,
+durata delle closure e concorrenza. Coordina con il branch interfaccia, senza
+modificarlo.
+
+
+RISP-26 - Verificare profondita residua negli oggetti runtime
+------------------------------------------------------------------------------
+Stato: VERIFICA | Priorita: P2 | Impatto: alto
+Riferimenti precedenti: INT-4, ambito residuo
+Dipendenze: nessuna
+
+Dove
+src/types.rs: Cursor/is_container; src/environment.rs: parent; atom, Lambda,
+Native e frame
+
+Problema ed evidenza
+Cons, Form, Vector e Map vengono gia svuotati iterativamente. Il
+classificatore esclude gli oggetti runtime: un atom puo possedere un altro
+atom, una closure puo trattenere ambienti e un ambiente il proprio parent. Non
+e stata dimostrata qui la sicurezza dello stack per tutte queste catene, ne va
+presentata come gia garantita dalla correzione delle liste.
+
+Direzione proposta
+Preparare verifiche isolate in subprocess con limiti di tempo per i percorsi
+di distruzione ancora ricorsivi. Distinguere strutture profonde acicliche,
+cicli che non vengono liberati e semplici riferimenti condivisi. Proporre la
+minima estensione solo per i casi riprodotti.
+
+Criteri di completamento
+Esiste una matrice di percorsi coperti/non coperti e riproduzioni sicure.
+Nessun limite di stack o presunta regressione e affermato soltanto in base al
+comportamento delle cons.
+
+PROMPT BREVE
+Verifica INT-4 residuo: distruzione di catene profonde acicliche di atom,
+ambienti e closure. Usa subprocess protetti, separa stack overflow da
+cicli/leak e non modificare il modello di memoria prima di una riproduzione.
+
+
+RISP-27 - Definire quote e indipendenza fra VM
+------------------------------------------------------------------------------
+Stato: COORDINARE | Priorita: P1 | Impatto: alto
+Riferimenti precedenti: INT-13, quote; todo risorse
+Dipendenze: RISP-01 indipendente; RISP-18/19 possono procedere
+
+Dove
+src/context.rs; src/fuel.rs: TLS; make-string, strutture e profondita
+
+Problema ed evidenza
+Il fuel e per thread, non per istanza FuelMeter: due meter sullo stesso thread
+condividono contatori e profondita. make-string e le altre allocazioni non
+hanno una quota configurabile propria. MAX_EVAL_DEPTH e MAX_READ_DEPTH sono
+limiti fissi. Le nuove API della VM sono il posto naturale per decidere come
+configurare questi aspetti.
+
+Direzione proposta
+Definire un contratto dell'interprete per budget, dimensioni, profondita,
+riserve cleanup e VM annidate. L'host fornisce configurazione; non inserire
+limiti derivati da buffer o UI dell'editor. I fix locali di fuel possono
+procedere separatamente.
+
+Criteri di completamento
+Il contratto distingue limiti di memoria da fuel e timeout; descrive due VM
+sullo stesso thread, spawn e rientri. Sono identificati i punti da condividere
+con la nuova interfaccia.
+
+PROMPT BREVE
+Progetta quote e budget per istanza senza implementare la facciata: distingui
+TLS, VM annidate, cleanup, spawn, dimensioni e profondita. Nessun vincolo
+dell'editor. Proponi il contratto da condividere col branch interfaccia.
+
+
+RISP-28 - Definire risultato e ciclo di vita di spawn
+------------------------------------------------------------------------------
+Stato: COORDINARE | Priorita: P2 | Impatto: alto
+Riferimenti precedenti: INT-18; contratto con l'host
+Dipendenze: nessuna
+
+Dove
+src/eval.rs: spawn; src/types.rs e src/lispexp.rs: ThreadHandle;
+src/context.rs
+
+Problema ed evidenza
+spawn crea un JoinHandle in una variabile locale ma restituisce ancora Form
+vuota. La variante ThreadHandle esiste senza essere collegata a questo
+percorso. Un risultato vuoto e trattato come nil da alcuni predicati ma non
+uniformemente da equal. Mancano un contratto completo su risultato, errore,
+join, cancellazione e numero dei task.
+
+Direzione proposta
+Come correzione locale compatibile si puo restituire nil canonico, senza
+promettere gestione di task. La scelta di esporre handle, scheduler o
+cancellazione deve essere coordinata con il lavoro sull'interfaccia. Non
+aprire nuovi thread per completare la facciata in parallelo al side project.
+
+Criteri di completamento
+La scelta tra fire-and-forget e handle e esplicita. Le responsabilita di host
+e interprete sono definite; identita del valore e fine del task sono coerenti.
+
+PROMPT BREVE
+Per INT-18 proponi prima il contratto spawn compatibile col branch
+interfaccia: nil canonico oppure handle con risultato/errore e lifecycle.
+Indica la patch minima sul main; non introdurre scheduler, join o nuove API
+senza accordo.
+
+
+RISP-29 - Uniformare errori e diagnostica pubblica
+------------------------------------------------------------------------------
+Stato: COORDINARE | Priorita: P2 | Impatto: alto
+Riferimenti precedenti: INT-20; todo parser/diagnostica
+Dipendenze: nessuna
+
+Dove
+src/error.rs; src/parser.rs: ParserError; src/source_map.rs; punti d'ingresso
+pubblici
+
+Problema ed evidenza
+ParserError e gia esportato: quella parte del vecchio todo e risolta. Restano
+EOF e prefisso incompleto confusi in VoidExp, posizioni degli errori non
+strutturate come quelle delle forme e assenza di una rappresentazione pubblica
+uniforme per Display/Error. UncorrectFunctionDefinition viene ancora usato per
+lock, valori non callable e bootstrap.
+
+Direzione proposta
+Coordinare tipo di errore e raccolta della diagnostica con la facciata in
+corso. Correggere messaggi locali senza introdurre un secondo modello
+concorrente. Definire esplicitamente chi azzera i backtrace e come si
+rappresenta input incompleto per una REPL.
+
+Criteri di completamento
+La proposta copre parsing, valutazione, errori host, EOF/input incompleto e
+pulizia del backtrace, con esempi per un crate consumer. L'export di
+ParserError non viene reimplementato.
+
+PROMPT BREVE
+Progetta il contratto diagnostico sul main coordinandolo al branch:
+ParserError e gia pubblico. Distingui EOF/input incompleto, posizioni,
+Display/Error e cause oggi confuse in UncorrectFunctionDefinition. Non
+cambiare ancora le API.
+
+
+RISP-30 - Definire aggiornamenti atomici degli atom
+------------------------------------------------------------------------------
+Stato: DECISIONE | Priorita: P2 | Impatto: medio
+Riferimenti precedenti: INT-21, estensione della libreria
+Dipendenze: nessuna
+
+Dove
+src/base/atoms.rs; call_callable e semantica di eq/equal
+
+Problema ed evidenza
+deref e reset sono sicuri come operazioni separate sotto lock, ma la loro
+composizione non e atomica: due incrementi possono sovrascriversi. Il main
+rilascia gia il valore precedente fuori dal lock, correzione da preservare.
+Eseguire arbitrariamente una callback Lisp sotto lo stesso lock puo bloccarsi
+se la callback accede allo stesso atom.
+
+Direzione proposta
+Preferire una proposta esplicita di compare-and-set o di aggiornamento con
+semantica definita. Specificare confronto, valore restituito, eventuali retry
+ed effetti collaterali. Non aggiungere semplicemente swap che esegue Lisp
+sotto un lock non rientrante.
+
+Criteri di completamento
+Il contratto evita lost update, descrive callback/rientri ed eventuale
+problema ABA. La prova concorrente e deterministica quanto possibile e il Drop
+del vecchio valore resta fuori dal lock.
+
+PROMPT BREVE
+Progetta INT-21: confronta compare-and-set e swap, specificando confronto,
+risultati, retry ed effetti. Evita callback Lisp sotto un lock non rientrante
+e preserva drop fuori lock. Prima il contratto, poi una sola primitiva.
+
+
+RISP-31 - Tenere il rifacimento della facciata nel branch dedicato
+------------------------------------------------------------------------------
+Stato: ALTRO BRANCH | Priorita: P2 | Impatto: alto
+Riferimenti precedenti: todo: interfaccia unificata Risp
+Dipendenze: nessuna
+
+Dove
+Branch dell'interfaccia indicato dall'utente; non ispezionato in questa
+analisi
+
+Problema ed evidenza
+La facciata unificata, inizializzazione, eval_source/eval_form, call e
+registrazione sono gia un progetto in corso. Reimplementarli nel main per
+accelerare altri fix creerebbe due contratti e una migrazione piu costosa.
+
+Direzione proposta
+Proseguire sul main con fix interni e test. Per il branch tenere una checklist
+di invarianti: errori, root dei valori, reentry, fuel, Native, alias e
+sorgenti multiple. Il nome e il contenuto del branch non sono stati assunti o
+indovinati.
+
+Criteri di completamento
+Un eventuale lavoro successivo parte da branch/commit espliciti e confronta le
+API realmente presenti. La checklist di migrazione non viene confusa con
+difetti ancora da correggere nel main. Il riordino esteso di evaluator, lexer
+e distruttori resta successivo e separato dai fix funzionali.
+
+PROMPT BREVE
+Quando ti fornisco branch e commit della nuova interfaccia, confrontali con
+main e prepara solo una checklist di migrazione dei fix gia applicati. Non
+reimplementare la facciata nel main e non modificare branch o repository.
+
+
+RISP-32 - Ottimizzazioni soltanto dopo misure stabili
+------------------------------------------------------------------------------
+Stato: FUTURO | Priorita: P3 | Impatto: medio
+Riferimenti precedenti: todo performance; ottimizzazioni rinviate dall'utente
+Dipendenze: nessuna
+
+Dove
+src/base/strings.rs; src/base/mod.rs: expect_string; suite src/tests/perf
+
+Problema ed evidenza
+expect_string clona la stringa; operazioni di sola lettura pagano quindi copie
+evitabili. substring costruisce un Vec<char> completo anche per estrarre un
+tratto piccolo. Anche i confronti e le espansioni possono essere costosi, ma
+minori allocazioni non equivalgono automaticamente a tempi minori: i report
+precedenti lo hanno gia mostrato.
+
+Direzione proposta
+Un solo hotspot per volta, mantenendo identiche semantica e fixture. Confronti
+A/B ripetuti, tempi senza perf-alloc e contatori in un eseguibile separato.
+Evitare caching delle macro o pooling degli ambienti prima di stabilire
+invalidazione e lifetime.
+
+Criteri di completamento
+La singola ottimizzazione ha misure di tempo e allocazioni confrontabili, non
+solo fuel. Non e accettata una regressione generalizzata nascosta dal
+miglioramento di una metrica.
+
+PROMPT BREVE
+Ottimizza un solo hotspot nelle stringhe, iniziando dalle copie di
+expect_string. Mantieni semantica e API; misura A/B con tempi e allocazioni
+separati, senza PERF_BLESS su B. Riporta anche regressioni, non solo
+allocazioni risparmiate.
+
+
+RISP-33 - Contenere la crescita dell’interner dei simboli
+------------------------------------------------------------------------------
+Stato: COORDINARE | Priorita: P2 | Impatto: alto
+Riferimenti precedenti: todo: durata e limiti dell’interner
+Dipendenze: nessuna
+
+Dove
+src/lispexp.rs: obarray, intern, nil_name e t_name
+
+Problema ed evidenza
+obarray e una tabella globale di processo con chiavi String e valori
+Arc<String> forti. I nomi internati non vengono rimossi quando scompaiono gli
+ambienti che li usavano: una successione di simboli unici puo continuare a far
+crescere la tabella. Questa memoria trattenuta e distinta dai cicli Env/Lambda
+e dalla durata di una singola VM.
+
+Direzione proposta
+Definire se i simboli appartengono al processo o alla VM. Valutare riferimenti
+deboli con rimozione delle chiavi scadute oppure un interner per istanza;
+usare solo Weak nei valori non libera le chiavi della mappa. Conservare il
+significato di eq sui simboli, le cache nil/t e il comportamento fra thread.
+
+Criteri di completamento
+Esiste un contratto della durata e una verifica con molti nomi unici; i nomi
+ancora usati restano validi. Chiusura di una VM e recupero delle entry globali
+hanno responsabilita esplicite.
+
+PROMPT BREVE
+Analizza obarray/intern in src/lispexp.rs: proponi interner globale con sweep
+oppure per VM, distinguendo chiavi trattenute, simboli vivi, nil/t ed eq fra
+thread. Coordina il modello col branch interfaccia; per ora niente codice.
+
+
+APPENDICE A - MIGRAZIONE DI TUTTI GLI ID DEL VECCHIO RAPPORTO
+======================================================================
+
+LET-1: correzione presente: EOF dei simboli non genera token infiniti.
+LET-2: correzione presente: token non ammessi producono ParserError.
+LET-3: correzione presente: lettore iterativo e limite MAX_READ_DEPTH.
+LET-4: aperto -> RISP-11; politica delle conversioni -> RISP-24.
+LET-5: aperto -> RISP-12. #' resta una scelta; ?a non e una funzionalita
+       obbligatoria finche Risp non decide di avere caratteri come valori.
+LET-6: correzione presente: reset_after_error/discard_numeric_tail;
+       il vecchio todo! e sostituito da UnexpectedToken.
+
+INT-1: correzione presente: cleanup con riserva separata e scope.
+       Non equivale a una quota generale di memoria o a budget per VM.
+INT-2: correzione presente: EVAL_DEPTH e MAX_EVAL_DEPTH.
+       Limite fisso e configurazione futura restano RISP-27.
+INT-3: correzione presente: setq di nome assente usa set_root_variable.
+       L'analogo problema nelle primitive sulle liste resta RISP-04.
+INT-4: ampiamente corretto: visita iterativa di cons/Form/Vector/Map,
+       confronto, stampa, conversioni di sintassi e backquote strutturale.
+       Il main contiene regressioni dedicate. Non generalizzare la prova
+       agli oggetti runtime: ambito residuo RISP-26.
+INT-5: correzione presente: dolist/dotimes consumano fuel per iterazione.
+INT-6: aperto, architetturale -> RISP-25; interner -> RISP-33; quote -> RISP-27.
+INT-7: correzione presente per eq/eql anche su Lambda, Primitive, Native,
+       Atom, Fiber e ThreadHandle. I limiti di identita dei puntatori
+       funzione Rust non sono risolti da questo confronto.
+INT-8: correzione presente: SharedFiber confronta l'Arc condiviso.
+INT-9: correzione presente: Suspended/Running/Done e guardia del resumer.
+INT-10: correzione presente: YieldNotAllowed attraversa condition-case.
+        Non significa che il yield sia ora supportato nella forma protetta.
+INT-11: aperto -> RISP-13/14; la visita e gia iterativa.
+INT-12: correzione presente: format non ridecodifica i backslash.
+INT-13: parziale: checked_mul e try_reserve_exact presenti;
+        fuel -> RISP-19; quote -> RISP-27.
+INT-14: correzione presente: conversione numerica senza saturazione
+        e %d finito troncato senza cast fuori intervallo.
+INT-15: aperto -> RISP-04/05/18. Firma &rest intenzionale e documentata;
+        non trasformarla automaticamente nella firma Emacs.
+INT-16: aperto -> RISP-06/07.
+INT-17: da separare in contratto linguistico -> RISP-24, con RISP-11.
+INT-18: aperto -> RISP-28. Il main restituisce ancora Form vuota.
+INT-19: aperto -> RISP-17. Un Env figlio da solo non basta per setq.
+INT-20: aperto -> RISP-29; messaggi locali bootstrap nel RISP-17.
+INT-21: funzionalita da progettare -> RISP-30; esempi -> RISP-22.
+INT-22: parziale: parametri delle lambda protetti; altri binding -> RISP-03.
+INT-23: correzione presente: function-doc restituisce nil sul caso residuale.
+INT-24: aperto, contratto da scegliere -> RISP-16.
+
+DOC-1: (rapporto Risp) aperto -> RISP-22.
+DOC-2: (rapporto Risp) aperto -> RISP-20.
+DOC-3: (rapporto Risp) aperto -> RISP-21.
+I DOC del vecchio rapporto rsedit hanno una numerazione diversa: non vanno
+confusi con questi tre ID. Le schede solo editor non appartengono a Risp.
+
+ALTRE CORREZIONI GIA PRESENTI DA NON RIPETERE
+- ParserError e esportato pubblicamente da src/lib.rs.
+- call_callable risolve gli alias iterativamente e rifiuta i cicli;
+  restano da uniformare gli altri ingressi (RISP-08/09/10).
+- Le sostituzioni in Env e reset dell'atom rilasciano il valore precedente
+  fuori dal lock; mantenere questo comportamento nei fix successivi.
+- Esistono test di stack-safety, conversioni e rientri del Drop registrati.
+- Le suite di tempo/fuel/allocazioni sono distinte; perf-alloc e test-only.
+- Il manuale base e fornito da BASE_FUNCTION_INDEX. Non serve reintrodurre
+  l'esportazione del testo: serve mantenerlo coerente con la semantica.
+
+APPENDICE B - MANUTENZIONE DEL RAPPORTO
+======================================================================
+Dopo ogni intervento aggiornare SOLO la scheda coinvolta con:
+  stato: risolto / parziale / aperto
+  commit applicato: <hash>
+  verifiche eseguite: <comandi ed esito>
+  parti rinviate: <ID>
+Conservare il prompt come storico, marcandolo NON PIU DA ESEGUIRE quando
+il problema e risolto. Non dichiarare superata una prova se non e stata
+eseguita. Prima di usare una scheda dopo altri cambiamenti, confrontare
+le funzioni indicate con il main attuale: questo e uno snapshot, non
+un elenco eternamente valido.
+
+Per l'eventuale sostituzione nel repository: aggiungere questo file come
+doc/rapporto-problemi.txt; aggiornare i link che puntano al .typ/.pdf.
+Il vecchio sorgente Typst e il PDF possono essere archiviati in Git, ma non
+devono restare presentati come rapporto corrente con stati contraddittori.
+Non sono stati cancellati o sovrascritti file del repository in questa fase.
+

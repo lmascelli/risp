@@ -305,6 +305,7 @@ fn compare_chain<T: LispContext>(
 
 // Submodules must follow the macros they use because `macro_rules!` has textual scope.
 mod atoms;
+mod collections;
 mod comparisons;
 mod fibers;
 mod functions;
@@ -335,6 +336,7 @@ impl<T: LispContext> Registry<'_, T> {
 pub fn setup_base_env<T: LispContext>(env: Arc<Env<T>>) {
     let into = Registry { env: &env };
     atoms::install(&into);
+    collections::install(&into);
     comparisons::install(&into);
     fibers::install(&into);
     functions::install(&into);

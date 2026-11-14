@@ -15,7 +15,7 @@ DESCRIPTION
     parameters; native signatures are in their documentation strings.
     In rsedit, C-h f on a function name opens its help.
 
-    There are 87 base function names, including aliases, and 28 special
+    There are 103 base function names, including aliases, and 28 special
     form names in this version. Native functions supplied by an embedding
     application are not included.
 
@@ -55,6 +55,7 @@ EQUALITY AND TYPES
         stringp                   whether a value is a string
         symbolp                   whether a value is a symbol
         vectorp                   whether a value is a vector
+        mapp                      whether a value is a map
         functionp                 whether a value denotes a callable
 
 BUILDING AND READING LISTS
@@ -76,11 +77,31 @@ SEQUENCES AND ASSOCIATION LISTS
         assoc                     find an association by a structurally equal
                                   key
         assq                      currently the same search as assoc
-        mapcar                    call a function on list elements; collect
-                                  results
-        mapc                      call for effects; return the input list
+        mapcar                    call a function on list or vector
+                                  elements; collect results
+        mapc                      call for effects; return the input
+                                  sequence
         apply                     call with arguments spliced from a final
                                   list
+
+VECTORS AND MAPS
+        vector                    a new vector of the arguments
+        make-vector               a vector of N copies of one value
+        aref                      the vector element at a zero-based index
+        vector-set                a copy of a vector with one element
+                                  replaced
+        make-map                  a map from alternating keys and values
+        map-elt                   the value for a key, or a default
+        map-contains-key          whether a map has an entry for a key
+        map-insert                a copy of a map with one key set
+        map-delete                a copy of a map without one key
+        map-keys                  the keys as strings, sorted
+        map-values                the values, in sorted key order
+        map-pairs                 an alist of (KEY . VALUE), sorted by key
+        map-length                the number of entries in a map
+        map-do                    call a function on each key and value
+        map-apply                 call on each key and value; collect
+                                  results
 
 CHANGING A LIST BINDING
         add-to-list               prepend missing elements to a named list
@@ -227,6 +248,18 @@ CURRENT BEHAVIOR
     flag. The named-list update functions currently write their result in
     the calling environment; account for this when calling them in a
     nested lexical scope.
+
+    Vectors and maps are never changed in place: vector-set, map-insert
+    and map-delete return a new value and leave their argument as it was.
+    There is no aset or puthash, and map-delete is not destructive as it
+    is in Emacs's map.el. A map key is a string; a symbol key stands for
+    its name, so 'a and "a" name the same entry. map-keys, map-pairs,
+    map-do and map-apply pass keys as strings. Maps print, and are
+    traversed, in sorted key order. mapp is nil for association lists.
+    aref and vector-set signal args-out-of-range for an index that is not
+    a whole number inside the vector; elt returns nil instead. The
+    elements of a vector literal and the values of a map literal are
+    evaluated, so '[a b] is needed for a vector of symbols.
 
     backquote handles proper syntax lists and vectors. Dotted templates,
     maps and nested backquote levels are not fully expanded. The reader's

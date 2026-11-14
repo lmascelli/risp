@@ -34,4 +34,5 @@ mod stack_safety_tests;
 mod symbol_tests;
 mod syntax_conversion;
 mod thread_tests;
+mod vector_map_tests;
 mod yield_tests;

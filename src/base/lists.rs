@@ -483,11 +483,27 @@ fn primitive_elt<T: LispContext>(
     }
 }
 
-const MAPCAR_DOC: &str = "(mapcar FUNCTION LIST): Apply FUNCTION to each element of \
-                 LIST in turn and return a list of the results. FUNCTION may \
-                 be a lambda, a primitive, or a symbol naming a function.\n\n\
+/// Collect a list or vector argument, charging one fuel unit per element.
+fn expect_list_or_vector<T: LispContext>(
+    exp: &LispExp<T>,
+    ctx: &T,
+) -> Result<Vec<LispExp<T>>, EvalError<T>> {
+    match exp {
+        LispExp::Vector(items) => {
+            charge(ctx, items.len())?;
+            Ok(items.to_vec())
+        }
+        other => expect_list(other, ctx),
+    }
+}
+
+const MAPCAR_DOC: &str = "(mapcar FUNCTION SEQUENCE): Apply FUNCTION to each element \
+                 of SEQUENCE, a list or a vector, in turn and return a list of \
+                 the results. FUNCTION may be a lambda, a primitive, or a \
+                 symbol naming a function.\n\n\
                  Example:\n\
                  (mapcar '1+ '(1 2 3))              => (2 3 4)\n\
+                 (mapcar '1+ [1 2 3])               => (2 3 4)\n\
                  (mapcar (lambda (x) (* x x)) '(1 2 3)) => (1 4 9)";
 
 fn primitive_mapcar<T: LispContext>(
@@ -496,7 +512,7 @@ fn primitive_mapcar<T: LispContext>(
     ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
     exact_arity(args, 2)?;
-    let list = expect_list(&args[1], ctx)?;
+    let list = expect_list_or_vector(&args[1], ctx)?;
     let mut result = Vec::with_capacity(list.len());
     for item in list {
         result.push(call_callable(&args[0], &[item], env.clone(), ctx)?);
@@ -504,8 +520,9 @@ fn primitive_mapcar<T: LispContext>(
     Ok(LispExp::proper_list(result))
 }
 
-const MAPC_DOC: &str = "(mapc FUNCTION LIST): Apply FUNCTION to each element of LIST \
-                 for its side effects and return LIST unchanged.\n\n\
+const MAPC_DOC: &str = "(mapc FUNCTION SEQUENCE): Apply FUNCTION to each element of \
+                 SEQUENCE, a list or a vector, for its side effects and return \
+                 SEQUENCE unchanged.\n\n\
                  Example:\n\
                  (mapc (lambda (x) (log (number-to-string x))) '(1 2 3))\n\
                  ; logs \"1\", \"2\", \"3\" and returns (1 2 3)";
@@ -516,7 +533,7 @@ fn primitive_mapc<T: LispContext>(
     ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
     exact_arity(args, 2)?;
-    let list = expect_list(&args[1], ctx)?;
+    let list = expect_list_or_vector(&args[1], ctx)?;
     for item in &list {
         call_callable(&args[0], std::slice::from_ref(item), env.clone(), ctx)?;
     }
