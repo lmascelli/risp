@@ -108,7 +108,7 @@ viene corretto, si aggiorna la descrizione qui e si toglie la scheda là.
   [`utils.rs`], [Arità, grammatica dei parametri, legame degli argomenti, conversione dati → forme, mappatura errori → condizioni.],
   [`fuel.rs`], [Il meccanismo del carburante (@carburante). Non dipende da nulla e il valutatore non lo usa direttamente: serve all'host per implementare `consume_fuel`.],
   [`handshake.rs`], [`bootstrap_vm`: crea l'ambiente radice, installa le primitive e verifica che l'interprete funzioni.],
-  [`base/`], [Le 106 primitive indipendenti dall'host, in dodici moduli (@primitive-base).],
+  [`base/`], [Le 108 primitive indipendenti dall'host, in tredici moduli (@primitive-base).],
   [`tests/`], [I test dell'interprete, eseguiti con il contesto `()`.],
 )
 
@@ -119,7 +119,7 @@ esempio, chiama direttamente anche `eval` e `Parser`.
 
 #canvas(height: 6.3cm)[
   #node(6.6cm, 0.4cm, 13.0cm, 0.7cm, [`handshake.rs` --- `bootstrap_vm`: la radice, le primitive, lo script di verifica])
-  #node(6.6cm, 1.6cm, 13.0cm, 0.7cm, [`base/` --- le 106 primitive di base, in dodici moduli], fill: paper)
+  #node(6.6cm, 1.6cm, 13.0cm, 0.7cm, [`base/` --- le 108 primitive di base, in tredici moduli], fill: paper)
   #node(4.9cm, 2.8cm, 9.6cm, 0.7cm, [`eval.rs` --- il valutatore])
   #node(11.6cm, 2.8cm, 3.0cm, 0.7cm, [`parser.rs`])
   #node(1.65cm, 4.0cm, 3.1cm, 0.7cm, [`environment.rs`])
@@ -998,6 +998,31 @@ non può (`Unreadable`). Lavora con una pila esplicita, come la stampa di
 - contenitori annidati oltre i 256 livelli del lettore danno `TooDeep`;
 - lambda, primitive, funzioni native, atomi, fiber e thread non hanno
   sintassi: `Unreadable::Value` li restituisce come parte colpevole.
+
+=== JSON
+
+`json.rs` legge e scrive JSON senza dipendenze, con lo stesso schema a pila
+esplicita: un array annidato centomila volte non consuma stack. La
+corrispondenza è fissa:
+
+#ref-table(
+  columns: (3.4cm, 1fr),
+  header: ([JSON], [Valore Lisp]),
+  [oggetto], [mappa; una chiave ripetuta tiene l'ultimo valore],
+  [array], [vettore],
+  [stringa], [stringa; `\u` con le coppie surrogate, una surrogata sola è un errore],
+  [numero], [`f64`; un numero fuori scala (`1e400`) è un errore],
+  [`true`], [`t`],
+  [`false`, `null`], [i simboli `false` e `null`, mai `nil`],
+)
+
+`parse_json` restituisce `JsonError` con il messaggio, la riga e la colonna
+(da 1, in caratteri) e la posizione (da 0, in caratteri), calcolate solo
+quando c'è un errore. `write_json` scrive JSON compatto con le chiavi ordinate:
+gli interi fino a $2^53$ senza parte decimale, gli altri numeri con le cifre
+più brevi che si rileggono uguali; nelle stringhe sfuggono solo `"`, `\` e i
+caratteri di controllo. Restituisce la prima parte che non ha significato
+JSON: `nil`, un altro simbolo, una lista, un numero non finito, una funzione.
 
 // ===========================================================================
 = Gli ambienti <ambienti>
@@ -2501,7 +2526,7 @@ nella radice, quindi le tre variabili che usa restano globali #rapporto("INT-19"
 == Cosa l'interprete esporta
 
 `lisp/mod.rs` rende pubblici, all'interno del crate: `eval`, `resume_frames`,
-`Parser`, `form_to_data`, `write_readable`, `Unreadable`, `Env`, `VARIABLE_DOCUMENTATION`, `LispExp`, `Lambda`,
+`Parser`, `form_to_data`, `write_readable`, `Unreadable`, `parse_json`, `write_json`, `JsonError`, `Env`, `VARIABLE_DOCUMENTATION`, `LispExp`, `Lambda`,
 `Frame`, `LispPrimitive`, `EvalError`, `LispContext`, `FuelMeter`, `FuelScope`,
 `DEFAULT_FUEL`, `set_remaining`, `bootstrap_vm`, `setup_base_env`,
 `call_callable`, `lisp_display`, `exact_arity`, `some_arguments` (e `measure`
@@ -2540,6 +2565,7 @@ impl<T: LispContext> Registry<'_, T> {
   [`fibers`], [2], [`resume`, `fiber-done-p`],
   [`functions`], [8], [`funcall`, `eval`, `eval-string`, `eval-string-safe`, `throw`, `signal`, `function-doc`, `variable-doc`],
   [`inspect`], [6], [`boundp`, `symbol-value`, `function-arglist`, `all-functions`, `all-macros`, `all-variables`],
+  [`json`], [2], [`json-parse-string`, `json-serialize`],
   [`lists`], [21], [`car`, `cdr`, `cons`, `list`, `nth`, `nthcdr`, `length`, `append`, `reverse`, `member`, `memq`, `assoc`, `assq`, `elt`, `mapcar`, `mapc`, `apply`, `identity`, `add-to-list`, `append-to-list`, `remove-from-list`],
   [`math`], [10], [`+`, `-`, `*`, `/`, `mod`, `%`, `abs`, `floor`, `1+`, `1-`],
   [`predicates`], [14], [`eq`, `eql`, `equal`, `null`, `not`, `consp`, `listp`, `stringp`, `numberp`, `symbolp`, `functionp`, `vectorp`, `zerop`, `atom`],
@@ -2599,6 +2625,7 @@ Le funzioni di aiuto leggono gli argomenti in modo uniforme:
   [`split-string`], [Senza separatori divide sugli spazi bianchi e scarta i pezzi vuoti; con una stringa vuota divide in caratteri; altrimenti divide sulle occorrenze letterali della stringa data (`"::"` è un solo separatore di due caratteri, non due separatori).],
   [`intern`, `symbol-name`], [Da stringa a simbolo e ritorno.],
   [`read`], [Legge con `Parser::for_data`, quindi restituisce dati e non valuta nulla. Vuole esattamente un valore nella stringa; `end-of-file` se il testo finisce prima, `invalid-read-syntax` per il resto. Un'unità di carburante per byte.],
+  [`json-parse-string`, `json-serialize`], [Chiamano `parse_json` e `write_json`. Un errore di lettura segnala `json-parse-error` con dati `(MESSAGGIO RIGA COLONNA POSIZIONE)`; un valore senza significato JSON segnala `wrong-type-argument` con dati `(json-value-p PARTE)`. Un'unità di carburante per byte.],
   [`prin1-to-string`, `readablep`], [Scrivono con `write_readable`. Ciò che non si rilegge fa segnalare `wrong-type-argument` con dati `(readablep PARTE)` alla prima e restituire `nil` alla seconda. Un'unità di carburante per byte scritto.],
   [`eval`, `eval-string`], [Valutano nell'ambiente del #emph[chiamante]: `(let ((x 5)) (eval 'x))` vale 5. `eval-string` valuta solo la prima espressione.],
   [`boundp`, `symbol-value`], [Guardano lo spazio delle variabili dall'ambiente del chiamante.],
@@ -2656,6 +2683,7 @@ codice da Emacs deve conoscerle.
   [Macro], [Niente `gensym`, niente docstring; espanse a ogni valutazione.], [`gensym`, docstring, espansione memorizzata dal compilatore.],
   [`yield`, `fiber`, `spawn`, atomi], [Presenti (@fiber, @thread).], [Assenti.],
   [`read`], [Solo da una stringa, che deve contenere un solo valore.], [Anche da buffer e marcatori; ignora ciò che segue il primo valore.],
+  [JSON], [`false` e `null` sono i simboli `false` e `null`; `nil`, le liste e gli altri simboli non si scrivono; le chiavi escono ordinate.], [`:false` e `:null` per difetto, scelti con `:false-object` e `:null-object`; `nil` si scrive come `{}`; liste associative e plist diventano oggetti.],
   [`prin1-to-string`], [Rifiuta funzioni, atomi, fiber, infiniti, NaN e simboli che non si rileggono, segnalando `wrong-type-argument`.], [Scrive `#<...>` e non fallisce; i simboli si scrivono con `\` davanti ai caratteri speciali.],
   [Vettori e mappe], [Immutabili: niente `aset` né `puthash`; `vector-set`, `map-insert` e `map-delete` restituiscono una copia. Gli elementi di `[...]` sono valutati.], [`aset` e `puthash` modificano sul posto; `map-delete` di map.el è distruttivo; `[...]` è una costante.],
 )
@@ -2715,6 +2743,7 @@ I test stanno in `lisp/tests/` e girano con il contesto `()`.
   [`lisp_core_compliance_tests.rs`], [comportamenti allineati a Emacs Lisp],
   [`parser_tests.rs`, `lexer_tests.rs`], [lettura e token],
   [`base_env_tests.rs`, `documentation_tests.rs`, `symbol_tests.rs`], [primitive di base, docstring, proprietà],
+  [`json_tests.rs`], [JSON in lettura e scrittura, posizioni degli errori, rifiuti, annidamento, carburante; la misura su 1 MB è un test ignorato da lanciare a parte],
   [`read_print_tests.rs`], [`read`, `prin1-to-string`, giro completo per ogni tipo, rifiuti, profondità],
   [`vector_map_tests.rs`], [primitive di vettori e mappe, copie, ordine delle chiavi, carburante],
 )

@@ -22,6 +22,7 @@ mod fiber_tests;
 mod fuel;
 mod function_aliases;
 mod handshake;
+mod json_tests;
 mod lexer_tests;
 mod lexical_context;
 mod lisp_core_compliance_tests;

@@ -310,6 +310,7 @@ mod comparisons;
 mod fibers;
 mod functions;
 mod inspect;
+mod json;
 mod lists;
 mod math;
 mod predicates;
@@ -342,6 +343,7 @@ pub fn setup_base_env<T: LispContext>(env: Arc<Env<T>>) {
     fibers::install(&into);
     functions::install(&into);
     inspect::install(&into);
+    json::install(&into);
     lists::install(&into);
     math::install(&into);
     predicates::install(&into);

@@ -15,7 +15,7 @@ DESCRIPTION
     parameters; native signatures are in their documentation strings.
     In rsedit, C-h f on a function name opens its help.
 
-    There are 106 base function names, including aliases, and 28 special
+    There are 108 base function names, including aliases, and 28 special
     form names in this version. Native functions supplied by an embedding
     application are not included.
 
@@ -135,6 +135,10 @@ READING AND WRITING DATA
         prin1-to-string           text that read turns back into an equal
                                   value
         readablep                 that text, or nil if there is none
+
+JSON
+        json-parse-string         the value of a JSON text, as Lisp data
+        json-serialize            compact JSON text for a Lisp value
 
 CALLING AND EVALUATING
         funcall                   call a function with evaluated arguments
@@ -287,6 +291,18 @@ CURRENT BEHAVIOR
     for containers nested deeper than the reader's 256 levels with PART
     the whole value. Emacs prints these as #<...> instead. readablep
     returns nil in the same cases. format's %S does not use this writer.
+
+    json-parse-string turns objects into maps and arrays into vectors.
+    true is t; false and null are the symbols false and null, never nil,
+    so an empty list and a JSON false stay distinct. Numbers are floats,
+    so integers beyond 2^53 lose precision; a repeated object key keeps
+    its last value. Errors signal json-parse-error with data (MESSAGE
+    LINE COLUMN POSITION): line and column from 1, position a zero-based
+    character offset. json-serialize writes compact JSON with sorted keys
+    and signals wrong-type-argument with data (json-value-p PART) for nil,
+    other symbols, lists, infinities, NaN and functions: write false or
+    null instead of nil, and a vector for an array. Quote them in vector
+    literals, as in '[t false null], since vector elements are evaluated.
 
     backquote handles proper syntax lists and vectors. Dotted templates,
     maps and nested backquote levels are not fully expanded. The reader's
