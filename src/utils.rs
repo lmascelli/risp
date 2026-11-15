@@ -148,6 +148,11 @@ pub fn bind_lambda_args<T: LispContext>(
     Ok(())
 }
 
+/// Self-evaluating names cannot be used as variable bindings.
+pub(super) fn is_reserved_binding_name(name: &str) -> bool {
+    matches!(name, "t" | "nil") || name.starts_with(':')
+}
+
 /// Parse required, optional, and rest parameter names, validating marker order.
 /// Reject self-evaluating symbols, which cannot be read as lexical bindings.
 pub(super) fn parse_lambda_params<T: LispContext>(
@@ -170,7 +175,7 @@ pub(super) fn parse_lambda_params<T: LispContext>(
         let LispExp::Symbol(name) = param else {
             return Err(EvalError::DefunParamIsNotASymbol);
         };
-        if matches!(name.as_str(), "t" | "nil") || name.starts_with(':') {
+        if is_reserved_binding_name(name) {
             return Err(EvalError::DefunInvalidParameterName(name.to_string()));
         }
         match name.as_str() {

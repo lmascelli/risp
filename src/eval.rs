@@ -3,7 +3,7 @@
 use super::{
     Env, EvalError, FiberState, Frame, Lambda, LispContext, LispExp, LispVec,
     VARIABLE_DOCUMENTATION, bind_lambda_args, condition_matches, data_to_form, error_data,
-    error_symbol, form_to_data, parse_lambda_params,
+    error_symbol, form_to_data, parse_lambda_params, utils::is_reserved_binding_name,
 };
 use std::{cell::Cell, collections::HashMap, sync::Arc};
 
@@ -559,6 +559,9 @@ fn eval_special_form_or_call_step<T: LispContext>(
             for arg in args {
                 if is_symbol {
                     if let LispExp::Symbol(var_name) = arg {
+                        if is_reserved_binding_name(var_name) {
+                            return Err(EvalError::SetqSymbolRequired);
+                        }
                         list_var_name = var_name.to_string();
                         is_symbol = false;
                     } else {
@@ -817,6 +820,9 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 return Err(EvalError::DolistInvalidBinding);
             }
             let var_name = if let LispExp::Symbol(name) = &spec[0] {
+                if is_reserved_binding_name(name) {
+                    return Err(EvalError::DolistInvalidBinding);
+                }
                 name.to_string()
             } else {
                 return Err(EvalError::DolistInvalidBinding);
@@ -874,6 +880,9 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 return Err(EvalError::DotimesInvalidBinding);
             }
             let var_name = if let LispExp::Symbol(name) = &spec[0] {
+                if is_reserved_binding_name(name) {
+                    return Err(EvalError::DotimesInvalidBinding);
+                }
                 name.to_string()
             } else {
                 return Err(EvalError::DotimesInvalidBinding);
@@ -917,6 +926,9 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 Err(EvalError::DefvarNameMustBeASymbol)
             } else {
                 let name = if let LispExp::Symbol(name) = &args[0] {
+                    if is_reserved_binding_name(name) {
+                        return Err(EvalError::DefvarNameMustBeASymbol);
+                    }
                     name.to_string()
                 } else {
                     return Err(EvalError::DefunNameMustBeASymbol);
@@ -1136,12 +1148,15 @@ fn parse_let_binding<T: LispContext>(
     match binding {
         LispExp::Form(pair) if pair.len() == 2 => {
             if let LispExp::Symbol(name) = &pair[0] {
+                if is_reserved_binding_name(name) {
+                    return Err(EvalError::LetUnvalidBindingAt(index));
+                }
                 Ok((name.to_string(), Some(pair[1].clone())))
             } else {
                 Err(EvalError::LetUnvalidBindingAt(index))
             }
         }
-        LispExp::Symbol(name) => Ok((name.to_string(), None)),
+        LispExp::Symbol(name) if !is_reserved_binding_name(name) => Ok((name.to_string(), None)),
         _ => Err(EvalError::LetUnvalidBindingAt(index)),
     }
 }

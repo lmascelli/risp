@@ -111,6 +111,103 @@ mod tests {
         );
     }
 
+    fn assert_reserved_binding_rejected(template: &str, error: EvalError<()>) {
+        for name in ["t", "nil", ":keyword", ":"] {
+            for initial in [None, Some(LispExp::number(99.0))] {
+                let env = bare_env();
+                if let Some(value) = &initial {
+                    env.set_variable(name.into(), value.clone());
+                }
+                env.set_variable("touched".into(), LispExp::number(0.0));
+                let doc = LispExp::string("original doc".into());
+                env.put_property(name, crate::VARIABLE_DOCUMENTATION, doc.clone());
+                let source = template.replace("NAME", name);
+                assert_eq!(eval_str(&source, env.clone()).unwrap_err(), error, "{source}");
+                assert_eq!(env.get_variable(name), initial, "{source}");
+                assert_eq!(
+                    env.get_variable("touched"),
+                    Some(LispExp::number(0.0)),
+                    "{source}"
+                );
+                assert_eq!(
+                    env.get_property(name, crate::VARIABLE_DOCUMENTATION),
+                    Some(doc),
+                    "{source}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn setq_rejects_reserved_bindings() {
+        for source in [
+            "(setq NAME (setq touched 1))",
+            "(setq ordinary 7 NAME (setq touched 1))",
+        ] {
+            assert_reserved_binding_rejected(source, EvalError::SetqSymbolRequired);
+        }
+    }
+
+    #[test]
+    fn let_rejects_reserved_bindings() {
+        for source in [
+            "(let (NAME) (setq touched 2))",
+            "(let ((NAME (setq touched 1))) (setq touched 2))",
+        ] {
+            assert_reserved_binding_rejected(source, EvalError::LetUnvalidBindingAt(0));
+        }
+        assert_reserved_binding_rejected(
+            "(let (ordinary NAME) (setq touched 2))",
+            EvalError::LetUnvalidBindingAt(1),
+        );
+    }
+
+    #[test]
+    fn let_star_rejects_reserved_bindings() {
+        for source in [
+            "(let* (NAME) (setq touched 2))",
+            "(let* ((NAME (setq touched 1))) (setq touched 2))",
+        ] {
+            assert_reserved_binding_rejected(source, EvalError::LetUnvalidBindingAt(0));
+        }
+        assert_reserved_binding_rejected(
+            "(let* (ordinary NAME) (setq touched 2))",
+            EvalError::LetUnvalidBindingAt(1),
+        );
+    }
+
+    #[test]
+    fn defvar_rejects_reserved_bindings() {
+        for source in ["(defvar NAME)", "(defvar NAME (setq touched 1) \"new doc\")"] {
+            assert_reserved_binding_rejected(source, EvalError::DefvarNameMustBeASymbol);
+        }
+    }
+
+    #[test]
+    fn defconst_rejects_reserved_bindings() {
+        for source in ["(defconst NAME)", "(defconst NAME (setq touched 1) \"new doc\")"] {
+            assert_reserved_binding_rejected(source, EvalError::DefvarNameMustBeASymbol);
+        }
+    }
+
+    #[test]
+    fn dolist_rejects_reserved_bindings() {
+        assert_reserved_binding_rejected(
+            "(dolist (NAME (progn (setq touched 1) '(1)) (setq touched 3)) (setq touched 2))",
+            EvalError::DolistInvalidBinding,
+        );
+        assert_reserved_binding_rejected("(dolist (NAME nil))", EvalError::DolistInvalidBinding);
+    }
+
+    #[test]
+    fn dotimes_rejects_reserved_bindings() {
+        assert_reserved_binding_rejected(
+            "(dotimes (NAME (setq touched 1) (setq touched 3)) (setq touched 2))",
+            EvalError::DotimesInvalidBinding,
+        );
+        assert_reserved_binding_rejected("(dotimes (NAME 0))", EvalError::DotimesInvalidBinding);
+    }
+
     #[test]
     fn truthiness_only_nil_and_empty_list_are_false() {
         // Zero, empty strings, and empty vectors and maps are truthy; only nil is false.
