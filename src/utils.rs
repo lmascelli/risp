@@ -154,10 +154,17 @@ pub(super) fn is_reserved_binding_name(name: &str) -> bool {
 }
 
 /// Parse required, optional, and rest parameter names, validating marker order.
+/// Accept nil as the empty list, including after macro argument conversion.
 /// Reject self-evaluating symbols, which cannot be read as lexical bindings.
 pub(super) fn parse_lambda_params<T: LispContext>(
-    params_list: &[LispExp<T>],
+    parameters: &LispExp<T>,
 ) -> Result<(Vec<String>, Vec<String>, Option<String>), EvalError<T>> {
+    let params_list: &[LispExp<T>] = match parameters {
+        LispExp::Form(items) => items,
+        other if other.is_nil() => &[],
+        _ => return Err(EvalError::DefunParamsAreNotAList),
+    };
+
     #[derive(PartialEq)]
     enum Mode {
         Required,

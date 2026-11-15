@@ -585,11 +585,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
             if let LispExp::Symbol(func_name) = &args[0] {
                 let mut body_index = 2;
                 let mut doc = None;
-                let (params, optionals, rest) = if let LispExp::Form(params_list) = &args[1] {
-                    parse_lambda_params(params_list)?
-                } else {
-                    return Err(EvalError::DefunParamsAreNotAList);
-                };
+                let (params, optionals, rest) = parse_lambda_params(&args[1])?;
 
                 if let LispExp::String(doc_string) = &args[2]
                     && args.len() > 3
@@ -619,11 +615,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 return Err(EvalError::DefunNotCorrectExpression);
             }
 
-            let (params, optionals, rest) = if let LispExp::Form(params_list) = &args[0] {
-                parse_lambda_params(params_list)?
-            } else {
-                return Err(EvalError::DefunParamsAreNotAList);
-            };
+            let (params, optionals, rest) = parse_lambda_params(&args[0])?;
 
             let body = args[1..].to_vec();
 
@@ -1103,21 +1095,17 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 Err(EvalError::DefunNotCorrectExpression)
             } else {
                 if let LispExp::Symbol(macro_name) = &args[0] {
-                    if let LispExp::Form(params_list) = &args[1] {
-                        let (params, optionals, rest) = parse_lambda_params(params_list)?;
-                        let lambda = Lambda {
-                            params,
-                            optionals,
-                            rest,
-                            body: args[2..].to_vec(),
-                            env: env.clone(),
-                            doc: None,
-                        };
-                        env.set_macro(macro_name.to_string(), LispExp::lambda(lambda));
-                        Ok(EvalStep::Done(LispExp::symbol(macro_name.to_string())))
-                    } else {
-                        Err(EvalError::DefunParamsAreNotAList)
-                    }
+                    let (params, optionals, rest) = parse_lambda_params(&args[1])?;
+                    let lambda = Lambda {
+                        params,
+                        optionals,
+                        rest,
+                        body: args[2..].to_vec(),
+                        env: env.clone(),
+                        doc: None,
+                    };
+                    env.set_macro(macro_name.to_string(), LispExp::lambda(lambda));
+                    Ok(EvalStep::Done(LispExp::symbol(macro_name.to_string())))
                 } else {
                     Err(EvalError::DefunNameMustBeASymbol)
                 }

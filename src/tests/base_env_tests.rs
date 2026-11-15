@@ -138,6 +138,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn macro_generated_functions_accept_empty_parameter_lists() {
+        assert_eq!(
+            eval_ok("\
+                (defmacro define-command (name params &rest body)
+                  `(defun ,name ,params ,@body))
+                (define-command answer () 42)
+                (answer)
+            "),
+            LispExp::number(42.0)
+        );
+    }
+
+    #[test]
+    fn macro_generated_lambdas_accept_empty_parameter_lists() {
+        assert_eq!(
+            eval_ok("\
+                (defmacro make-function (params &rest body)
+                  `(lambda ,params ,@body))
+                (funcall (make-function () 42))
+            "),
+            LispExp::number(42.0)
+        );
+    }
+
+    #[test]
+    fn macro_generated_macros_accept_empty_parameter_lists() {
+        assert_eq!(
+            eval_ok("\
+                (defmacro define-macro (name params &rest body)
+                  `(defmacro ,name ,params ,@body))
+                (define-macro answer () 42)
+                (answer)
+            "),
+            LispExp::number(42.0)
+        );
+    }
+
     // Arithmetic: division by zero, unary quirks, chaining, mod sign
 
     #[test]
