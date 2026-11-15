@@ -34,7 +34,7 @@ fn primitive_add_to_list<T: LispContext>(
                         new_list.insert(0, args[i].clone());
                     }
                 }
-                env.set_variable(list_name.to_string(), LispExp::proper_list(new_list));
+                env.update_variable(list_name, LispExp::proper_list(new_list));
                 Ok(args[0].clone())
             } else {
                 Err(EvalError::RuntimeMessage(format!(
@@ -80,7 +80,7 @@ fn primitive_append_to_list<T: LispContext>(
                         new_list.push(args[i].clone());
                     }
                 }
-                env.set_variable(list_name.to_string(), LispExp::proper_list(new_list));
+                env.update_variable(list_name, LispExp::proper_list(new_list));
                 Ok(args[0].clone())
             } else {
                 Err(EvalError::RuntimeMessage(format!(
@@ -132,7 +132,7 @@ fn primitive_remove_from_list<T: LispContext>(
                         new_list.push(el);
                     }
                 }
-                env.set_variable(list_name.to_string(), LispExp::proper_list(new_list));
+                env.update_variable(list_name, LispExp::proper_list(new_list));
                 Ok(args[0].clone())
             } else {
                 Err(EvalError::RuntimeMessage(format!(

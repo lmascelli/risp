@@ -324,6 +324,64 @@ mod tests {
         ));
     }
 
+    const LIST_MUTATION_CASES: [(&str, &str); 3] = [
+        ("add-to-list", "(5 4 1 2 3 2)"),
+        ("append-to-list", "(1 2 3 2 4 5)"),
+        ("remove-from-list", "(1)"),
+    ];
+
+    #[test]
+    fn list_mutations_update_global_binding_and_return_symbol() {
+        for (primitive, expected) in LIST_MUTATION_CASES {
+            assert_eq!(
+                eval_ok(&format!("\
+                    (setq items '(1 2 3 2))
+                    (list ({primitive} 'items 2 3 4 5) items)
+                ")),
+                eval_ok(&format!("'(items {expected})")),
+                "{primitive}"
+            );
+        }
+    }
+
+    #[test]
+    fn list_mutations_update_global_binding_from_nested_scope() {
+        for (primitive, expected) in LIST_MUTATION_CASES {
+            assert_eq!(
+                eval_ok(&format!("\
+                    (setq items '(1 2 3 2))
+                    (list
+                      (let ((outer 0))
+                        (let ((inner 0)) ({primitive} 'items 2 3 4 5)))
+                      items)
+                ")),
+                eval_ok(&format!("'(items {expected})")),
+                "{primitive}"
+            );
+        }
+    }
+
+    #[test]
+    fn list_mutations_update_nearest_shadowing_binding() {
+        for (primitive, expected) in LIST_MUTATION_CASES {
+            for call in [
+                format!("({primitive} 'items 2 3 4 5)"),
+                format!("(let ((inner 0)) ({primitive} 'items 2 3 4 5))"),
+            ] {
+                assert_eq!(
+                    eval_ok(&format!("\
+                        (setq items '(global))
+                        (list
+                          (let ((items '(1 2 3 2))) (list {call} items))
+                          items)
+                    ")),
+                    eval_ok(&format!("'((items {expected}) (global))")),
+                    "{call}"
+                );
+            }
+        }
+    }
+
     // Predicates: eq/eql identity vs. equal structural comparison,
     // listp/functionp resolving nil and function-bound symbols
 
