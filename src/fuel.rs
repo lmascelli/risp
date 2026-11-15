@@ -5,6 +5,8 @@
 
 use std::{
     cell::Cell,
+    marker::PhantomData,
+    rc::Rc,
     sync::atomic::{AtomicU32, Ordering},
 };
 
@@ -40,9 +42,30 @@ thread_local! {
 /// Guard that closes a metered scope when dropped.
 ///
 /// Keep it alive for the evaluation and drop it on the thread that created it.
+/// It cannot be moved to another thread:
+///
+/// ```compile_fail
+/// use risp::FuelMeter;
+///
+/// let scope = FuelMeter::new(100).begin();
+/// std::thread::spawn(move || drop(scope));
+/// ```
+///
+/// Nor can it be shared with another thread:
+///
+/// ```compile_fail
+/// use risp::FuelMeter;
+///
+/// let scope = FuelMeter::new(100).begin();
+/// std::thread::scope(|threads| {
+///     threads.spawn(|| {
+///         let _scope = &scope;
+///     });
+/// });
+/// ```
 #[must_use = "the metered scope ends as soon as this guard is dropped"]
 pub struct FuelScope {
-    _private: (),
+    _private: PhantomData<Rc<()>>,
 }
 
 impl Drop for FuelScope {
@@ -172,7 +195,9 @@ impl FuelMeter {
             }
             depth.set(depth.get() + 1);
         });
-        FuelScope { _private: () }
+        FuelScope {
+            _private: PhantomData,
+        }
     }
 
     /// Reset this thread to the configured budget without opening a scope.
