@@ -6,7 +6,9 @@ const ADD_TO_LIST_DOC: &str = "(add-to-list LIST-VAR &rest ELEMENTS): Prepend ea
                  and rebind LIST-VAR to the result. Returns LIST-VAR. Unlike \
                  real Elisp's `add-to-list`, this accepts several ELEMENTS at \
                  once and has no APPEND or COMPARE-FN argument. LIST-VAR must \
-                 already be bound to a list.\n\n\
+                 already be bound to a list. Only the first occurrence of each \
+                 new element is prepended, so new elements appear in reverse \
+                 argument order. Existing duplicates are preserved.\n\n\
                  Example:\n\
                  (defvar my-list '(2 3))\n\
                  (add-to-list 'my-list 1) => my-list\n\
@@ -30,7 +32,7 @@ fn primitive_add_to_list<T: LispContext>(
                 let existing: Vec<LispExp<T>> = list.iter().collect();
                 let mut new_list = existing.clone();
                 for i in 1..args.len() {
-                    if !existing.contains(&args[i]) {
+                    if !new_list.contains(&args[i]) {
                         new_list.insert(0, args[i].clone());
                     }
                 }
@@ -54,7 +56,9 @@ fn primitive_add_to_list<T: LispContext>(
 const APPEND_TO_LIST_DOC: &str = "(append-to-list LIST-VAR &rest ELEMENTS): Like `add-to-list`, \
                  but appends each of ELEMENTS not already present to the end \
                  of the list bound to LIST-VAR instead of the front. Not a \
-                 standard Elisp primitive.\n\n\
+                 standard Elisp primitive. Only the first occurrence of each \
+                 new element is appended, in argument order. Existing \
+                 duplicates are preserved.\n\n\
                  Example:\n\
                  (defvar my-list '(1 2))\n\
                  (append-to-list 'my-list 3) => my-list\n\
@@ -76,7 +80,7 @@ fn primitive_append_to_list<T: LispContext>(
                 let existing: Vec<LispExp<T>> = list.iter().collect();
                 let mut new_list = existing.clone();
                 for i in 1..args.len() {
-                    if !existing.contains(&args[i]) {
+                    if !new_list.contains(&args[i]) {
                         new_list.push(args[i].clone());
                     }
                 }
@@ -136,7 +140,7 @@ fn primitive_remove_from_list<T: LispContext>(
                 Ok(args[0].clone())
             } else {
                 Err(EvalError::RuntimeMessage(format!(
-                    "[ERROR] add-to-list {} is not an existing list",
+                    "[ERROR] remove-from-list {} is not an existing list",
                     list_name
                 )))
             }

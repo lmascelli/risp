@@ -324,6 +324,53 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn list_mutations_skip_duplicate_arguments_in_first_occurrence_order() {
+        for (initial, arguments, prepended, appended) in [
+            ("nil", "1 2 1 3 2", "(3 2 1)", "(1 2 3)"),
+            (
+                "'(1 2 3 2)",
+                "2 4 5 4 3 5",
+                "(5 4 1 2 3 2)",
+                "(1 2 3 2 4 5)",
+            ),
+            (
+                "'((1) (1))",
+                "'(1) '(2) '(3) '(2)",
+                "((3) (2) (1) (1))",
+                "((1) (1) (2) (3))",
+            ),
+        ] {
+            for (primitive, expected) in [
+                ("add-to-list", prepended),
+                ("append-to-list", appended),
+            ] {
+                assert_eq!(
+                    eval_ok(&format!("\
+                        (setq items {initial})
+                        (list ({primitive} 'items {arguments}) items
+                              ({primitive} 'items {arguments}) items)
+                    ")),
+                    eval_ok(&format!("'(items {expected} items {expected})")),
+                    "{primitive}: {initial}, {arguments}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn remove_from_list_names_itself_in_invalid_list_errors() {
+        for setup in ["", "(setq items 7)"] {
+            match eval_err(&format!("{setup} (remove-from-list 'items 1)")) {
+                EvalError::RuntimeMessage(message) => assert_eq!(
+                    message,
+                    "[ERROR] remove-from-list items is not an existing list"
+                ),
+                other => panic!("expected a runtime message, got {other:?}"),
+            }
+        }
+    }
+
     const LIST_MUTATION_CASES: [(&str, &str); 3] = [
         ("add-to-list", "(5 4 1 2 3 2)"),
         ("append-to-list", "(1 2 3 2 4 5)"),
