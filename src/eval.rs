@@ -3,7 +3,7 @@
 use super::{
     Env, EvalError, FiberState, Frame, Lambda, LispContext, LispExp, LispVec,
     VARIABLE_DOCUMENTATION, bind_lambda_args, condition_matches, data_to_form, error_data,
-    error_symbol, parse_lambda_params,
+    error_symbol, form_to_data, parse_lambda_params,
 };
 use std::{cell::Cell, collections::HashMap, sync::Arc};
 
@@ -1161,7 +1161,8 @@ fn eval_macro_or_function_call_step<T: LispContext>(
 ) -> Result<EvalStep<T>, EvalError<T>> {
     if let Some(LispExp::Lambda(macro_lambda)) = env.get_macro(symbol) {
         let expand_frame = Env::new_child(&macro_lambda.env);
-        bind_lambda_args(&macro_lambda, args, &expand_frame)?;
+        let macro_args: Vec<_> = args.iter().map(form_to_data).collect();
+        bind_lambda_args(&macro_lambda, &macro_args, &expand_frame)?;
 
         let mut expansion = LispExp::nil();
         for form in &macro_lambda.body {

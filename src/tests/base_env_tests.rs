@@ -77,6 +77,67 @@ mod tests {
         assert_eq!(eval_ok("(nthcdr 99 '(1 2 3))"), LispExp::nil());
     }
 
+    #[test]
+    fn macro_arguments_are_nested_data_without_evaluation() {
+        assert_eq!(
+            eval_ok("\
+                (defmacro nested-tail (form)
+                  (list 'quote (cdr (car (cdr form)))))
+                (nested-tail (never-called (also-never-called unbound 42)))
+            "),
+            eval_ok("'(unbound 42)")
+        );
+    }
+
+    #[test]
+    fn macro_arguments_preserve_quote_and_dotted_payloads() {
+        for argument in ["'(a . b)", "(quote (a . b))"] {
+            assert_eq!(
+                eval_ok(&format!("\
+                    (defmacro inspect-quote (form)
+                      (list 'quote (list (car form) (car (cdr form)))))
+                    (inspect-quote {argument})
+                ")),
+                eval_ok("'(quote (a . b))")
+            );
+        }
+    }
+
+    #[test]
+    fn macro_optional_and_rest_arguments_are_data() {
+        let definition = "\
+            (defmacro arg-heads (a &optional b &rest more)
+              (list 'quote (list (car a) (car b)
+                                (car (car more)) (car (car (cdr more))))))
+        ";
+        for (arguments, expected) in [
+            ("(required unbound)", "'(required nil nil nil)"),
+            ("(required unbound) (optional unbound)", "'(required optional nil nil)"),
+            (
+                "(required unbound) (optional unbound) (first-rest unbound) (second-rest unbound)",
+                "'(required optional first-rest second-rest)",
+            ),
+        ] {
+            assert_eq!(
+                eval_ok(&format!("{definition} (arg-heads {arguments})")),
+                eval_ok(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn macro_destructured_expansion_runs_in_the_caller() {
+        assert_eq!(
+            eval_ok("\
+                (let ((x 100))
+                  (defmacro add-captured (form)
+                    (list '+ x (car (cdr form))))
+                  (let ((x 7)) (add-captured (ignored (+ x 1)))))
+            "),
+            LispExp::number(108.0)
+        );
+    }
+
     // Arithmetic: division by zero, unary quirks, chaining, mod sign
 
     #[test]

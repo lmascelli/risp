@@ -8,7 +8,8 @@ Dopo ogni patch annota il commit effettivamente applicato e lo stato.
 
 BASE (da incollare una volta per nuova chat)
 Lavora su https://github.com/lmascelli/risp, main aggiornato. Un solo punto.
-Non modificare il mio checkout: prepara una patch su copia temporanea.
+Non modificare il mio checkout: prepara una patch su copia temporanea ed incolla
+il contenuto nella chat.
 Mantieni le API salvo la modifica esplicitamente richiesta; non toccare
 il branch dell'interfaccia. Leggi prima solo i percorsi indicati. Niente
 refactoring, nuove dipendenze o formattazione dell'intero repository.
