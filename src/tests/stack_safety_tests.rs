@@ -90,6 +90,75 @@ fn backquote_preserves_expansion_order() {
 }
 
 #[test]
+fn backquote_two_levels_delay_unquotes_and_splices() {
+    let env = environment();
+    env.set_variable("n".into(), LispExp::number(0.0));
+    let first = eval_source(
+        "``(,(setq n (+ n 10)) ,,(setq n (+ n 1))
+            ,(list ,@(list (setq n (+ n 1))))
+            ,@(list (setq n (+ n 100))))",
+        env.clone(),
+    ).expect("expand outer backquote");
+    assert_eq!(env.get_variable("n"), Some(LispExp::number(2.0)));
+    assert_eq!(
+        Ok(first.clone()),
+        eval_source(
+            "'`(,(setq n (+ n 10)) ,1 ,(list 2)
+                 ,@(list (setq n (+ n 100))))",
+            env.clone(),
+        ),
+    );
+    assert_eq!(
+        eval(&first, env.clone(), &Host),
+        eval_source("'(12 1 (2) 112)", env.clone()),
+    );
+    assert_eq!(env.get_variable("n"), Some(LispExp::number(112.0)));
+}
+
+#[test]
+fn backquote_three_levels_expand_at_the_matching_depth() {
+    let env = environment();
+    env.set_variable("n".into(), LispExp::number(0.0));
+    let mut result = Parser::new(
+        "```(,(setq n (+ n 100)) ,,(setq n (+ n 10))
+             ,,,(setq n (+ n 1)) ,@(list (setq n (+ n 1000))))",
+    ).next::<Host>().expect("parse nested backquotes");
+    for (expected_n, expected) in [
+        (1.0, "'``(,(setq n (+ n 100)) ,,(setq n (+ n 10))
+                    ,,1 ,@(list (setq n (+ n 1000))))"),
+        (11.0, "'`(,(setq n (+ n 100)) ,11 ,1
+                    ,@(list (setq n (+ n 1000))))"),
+        (1111.0, "'(111 11 1 1111)"),
+    ] {
+        result = eval(&result, env.clone(), &Host).expect("expand next backquote");
+        assert_eq!(env.get_variable("n"), Some(LispExp::number(expected_n)));
+        assert_eq!(Ok(result.clone()), eval_source(expected, env.clone()));
+    }
+}
+
+#[test]
+fn backquote_depth_reaches_vectors_maps_and_dotted_tails() {
+    let env = environment();
+    env.set_variable("n".into(), LispExp::number(0.0));
+    assert_eq!(
+        eval_source(
+            "`(,(setq n (+ n 1))
+                `([,(setq n 99) ,,(setq n (+ n 1))]
+                  {a ,(setq n 99) z ,,(setq n (+ n 1))}
+                  (,(setq n 99) . ,,(setq n (+ n 1))))
+                ,(setq n (+ n 1)))",
+            env.clone(),
+        ),
+        eval_source(
+            "'(1 `([,(setq n 99) ,2] {a ,(setq n 99) z ,3}
+                    (,(setq n 99) . ,4)) 5)",
+            env.clone(),
+        ),
+    );
+    assert_eq!(env.get_variable("n"), Some(LispExp::number(5.0)));
+}
+
+#[test]
 fn spliced_values_are_not_expanded_again() {
     let env = environment();
     let item = LispExp::form(vec![
@@ -271,6 +340,11 @@ fn deep_backquote_does_not_overflow_stack() {
 }
 
 #[test]
+fn deep_nested_backquote_does_not_overflow_stack() {
+    assert_deep_walk("nested-backquote");
+}
+
+#[test]
 fn deep_condition_matching_does_not_overflow_stack() {
     assert_deep_walk("conditions");
 }
@@ -376,6 +450,28 @@ fn check_deep_backquote() {
     assert_eq!(cursor, &LispExp::number(42.0));
 }
 
+fn check_deep_nested_backquote() {
+    let mut template = LispExp::form(vec![
+        symbol("unquote"), symbol("must-not-be-evaluated"),
+    ]);
+    for _ in 0..DEPTH {
+        template = LispExp::form(vec![symbol("backquote"), template]);
+    }
+    let code = LispExp::form(vec![symbol("backquote"), template]);
+    let result = eval(&code, Env::new_root(), &Host).expect("expand nested backquotes");
+    let mut cursor = &result;
+    for _ in 0..DEPTH {
+        let LispExp::Cons(head) = cursor else { panic!("expected backquote") };
+        assert_eq!(head.car, symbol("backquote"));
+        let LispExp::Cons(operand) = &head.cdr else { panic!("expected operand") };
+        assert!(operand.cdr.is_nil());
+        cursor = &operand.car;
+    }
+    assert_eq!(cursor, &LispExp::proper_list(vec![
+        symbol("unquote"), symbol("must-not-be-evaluated"),
+    ]));
+}
+
 fn check_deep_conditions() {
     let mut conditions = symbol("unbound-variable");
     for _ in 0..DEPTH {
@@ -405,6 +501,7 @@ fn deep_walk_probe() {
     let case = std::env::var(CASE_ENV).expect("probe case supplied by parent");
     let check: fn() = match case.as_str() {
         "backquote" => check_deep_backquote,
+        "nested-backquote" => check_deep_nested_backquote,
         "conditions" => check_deep_conditions,
         _ => panic!("unknown probe case: {case}"),
     };

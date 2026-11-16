@@ -1125,8 +1125,8 @@ fn eval_special_form_or_call_step<T: LispContext>(
             }
         }
 
-        // Backquote supports one nesting level; comma inserts a value and comma-at
-        // splices a list into the template.
+        // Comma inserts a value and comma-at splices a list at the active
+        // backquote level.
         "backquote" => {
             if args.len() != 1 {
                 Err(EvalError::BackquoteNotOneArgument)
@@ -1199,8 +1199,8 @@ fn eval_backquote<T: LispContext>(
     ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
     enum Task<'a, T: LispContext> {
-        Visit(&'a LispExp<T>),
-        ListItem(&'a LispExp<T>),
+        Visit(&'a LispExp<T>, usize),
+        ListItem(&'a LispExp<T>, usize),
         Splice(&'a LispExp<T>),
         FinishList(usize),
         FinishCons(usize),
@@ -1220,39 +1220,56 @@ fn eval_backquote<T: LispContext>(
         return Ok(exp.clone());
     }
 
-    let mut pending = vec![Task::Visit(exp)];
+    let mut pending = vec![Task::Visit(exp, 1)];
     let mut converted = Vec::new();
 
     while let Some(task) = pending.pop() {
         match task {
-            Task::Visit(value) => match value {
+            Task::Visit(value, depth) => match value {
                 LispExp::Form(items) => {
-                    if is_tagged(items, "unquote") {
+                    let unquote = is_tagged(items, "unquote");
+                    let splice = is_tagged(items, "unquote-splicing");
+                    if unquote && depth == 1 {
                         converted.push(eval(&items[1], env.clone(), ctx)?);
                         continue;
                     }
-                    if is_tagged(items, "unquote-splicing") {
+                    if splice && depth == 1 {
                         return Err(EvalError::RuntimeMessage(
                             "unquote-splicing is only allowed as a list element".into(),
                         ));
+                    }
+
+                    let child_depth = if is_tagged(items, "backquote") {
+                        Some(depth + 1)
+                    } else if unquote || splice {
+                        Some(depth - 1)
+                    } else {
+                        None
+                    };
+                    if let Some(child_depth) = child_depth {
+                        // Preserve the prefix; its operand is not a splice position.
+                        pending.push(Task::FinishList(converted.len()));
+                        converted.push(items[0].clone());
+                        pending.push(Task::Visit(&items[1], child_depth));
+                        continue;
                     }
 
                     // A splice has a variable size, so remember the output
                     // boundary rather than the number of input elements.
                     pending.push(Task::FinishList(converted.len()));
 
-                    pending.extend(items.iter().rev().map(Task::ListItem));
+                    pending.extend(items.iter().rev().map(|item| Task::ListItem(item, depth)));
                 }
 
                 LispExp::Cons(cell) => {
                     pending.push(Task::FinishCons(converted.len()));
-                    pending.push(Task::Visit(&cell.cdr));
-                    pending.push(Task::ListItem(&cell.car));
+                    pending.push(Task::Visit(&cell.cdr, depth));
+                    pending.push(Task::ListItem(&cell.car, depth));
                 }
 
                 LispExp::Vector(items) => {
                     pending.push(Task::FinishVector(converted.len()));
-                    pending.extend(items.iter().rev().map(Task::Visit));
+                    pending.extend(items.iter().rev().map(|item| Task::Visit(item, depth)));
                 }
 
                 LispExp::Map(items) => {
@@ -1263,18 +1280,18 @@ fn eval_backquote<T: LispContext>(
                         .map(|(key, value)| (key.clone(), value))
                         .unzip();
                     pending.push(Task::FinishMap(keys));
-                    pending.extend(values.into_iter().rev().map(Task::Visit));
+                    pending.extend(values.into_iter().rev().map(|value| Task::Visit(value, depth)));
                 }
 
                 other => converted.push(other.clone()),
             },
 
-            Task::ListItem(value) => {
+            Task::ListItem(value, depth) => {
                 pending.push(match value {
-                    LispExp::Form(items) if is_tagged(items, "unquote-splicing") => {
+                    LispExp::Form(items) if depth == 1 && is_tagged(items, "unquote-splicing") => {
                         Task::Splice(&items[1])
                     }
-                    _ => Task::Visit(value),
+                    _ => Task::Visit(value, depth),
                 });
             }
 
