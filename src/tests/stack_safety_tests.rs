@@ -5,6 +5,7 @@ use crate::{
     Env, EvalError, LispContext, LispExp, Parser, eval, setup_base_env,
 };
 use std::{
+    collections::HashMap,
     io::Read,
     process::{Child, Command, Stdio},
     sync::Arc,
@@ -167,6 +168,104 @@ fn invalid_splice_stops_before_later_unquotes() {
 }
 
 #[test]
+fn backquote_expands_dotted_tails_and_map_values() {
+    let env = environment();
+    env.set_variable("b".into(), LispExp::number(2.0));
+    for (source, expected) in [
+        ("`(a . ,b)", "'(a . 2)"),
+        ("`((a . ,b) {value ,b} {})", "'((a . 2) {value 2} {})"),
+        ("`(,@nil . ,b)", "2"),
+        ("`(,@'(3 4) . ,b)", "'(3 4 . 2)"),
+        ("`(,@nil . nil)", "nil"),
+    ] {
+        assert_eq!(
+            eval_source(source, env.clone()),
+            eval_source(expected, env.clone()),
+            "source: {source}",
+        );
+    }
+}
+
+#[test]
+fn backquote_orders_cons_splices_tails_and_map_values() {
+    let env = environment();
+    env.set_variable("n".into(), LispExp::number(0.0));
+    let result = eval_source(
+        "`((,(setq n (+ n 1)) ,@(list (setq n (+ n 1)))
+             . {z ,(setq n (+ n 1)) a ,(setq n (+ n 1))})
+           ,(setq n (+ n 1)))",
+        env.clone(),
+    );
+    assert_eq!(
+        result,
+        eval_source("'((1 2 . {a 3 z 4}) 5)", env.clone()),
+    );
+    assert_eq!(env.get_variable("n"), Some(LispExp::number(5.0)));
+}
+
+#[test]
+fn backquote_preserves_cons_data_and_unquoted_values() {
+    let env = environment();
+    let data = LispExp::proper_list(vec![
+        symbol("unquote"), symbol("must-not-be-evaluated"),
+    ]);
+    let syntax = LispExp::form(vec![
+        symbol("unquote-splicing"), symbol("must-not-be-evaluated"),
+    ]);
+    env.set_variable("data".into(), data.clone());
+    env.set_variable("syntax".into(), syntax.clone());
+    assert_eq!(
+        eval_source("`(,data {value ,syntax} . ,syntax)", env.clone()),
+        Ok(LispExp::improper_list(
+            vec![data.clone(), LispExp::map(HashMap::from([
+                ("value".into(), syntax.clone()),
+            ]))],
+            syntax,
+        )),
+    );
+    let code = LispExp::form(vec![symbol("backquote"), data.clone()]);
+    assert_eq!(eval(&code, env, &Host), Ok(data));
+}
+
+#[test]
+fn backquote_rejects_misplaced_splices_before_later_effects() {
+    for (template, expected_n) in [
+        (",@(setq n 99)", 0.0),
+        ("(,(setq n 1) (a . ,@(setq n 99)) ,(setq n 2))", 1.0),
+        ("(,(setq n 1) [,@(setq n 99)] ,(setq n 2))", 1.0),
+        ("(,(setq n 1) {a ,@(setq n 99) z ,(setq n 2)})", 1.0),
+    ] {
+        let env = environment();
+        env.set_variable("n".into(), LispExp::number(0.0));
+        assert_eq!(
+            eval_source(&format!("`{template}"), env.clone()),
+            Err(EvalError::RuntimeMessage(
+                "unquote-splicing is only allowed as a list element".into(),
+            )),
+            "template: {template}",
+        );
+        assert_eq!(env.get_variable("n"), Some(LispExp::number(expected_n)));
+    }
+}
+
+#[test]
+fn backquote_rejects_improper_splice_values_without_losing_the_tail() {
+    let env = environment();
+    env.set_variable("n".into(), LispExp::number(0.0));
+    assert_eq!(
+        eval_source(
+            "`(,(setq n 1) ,@'(2 . 3) ,(setq n 2))",
+            env.clone(),
+        ),
+        Err(EvalError::WrongArgumentType {
+            expected: "List".into(),
+            got: LispExp::cons(LispExp::number(2.0), LispExp::number(3.0)),
+        }),
+    );
+    assert_eq!(env.get_variable("n"), Some(LispExp::number(1.0)));
+}
+
+#[test]
 fn deep_backquote_does_not_overflow_stack() {
     assert_deep_walk("backquote");
 }
@@ -237,12 +336,13 @@ fn assert_deep_walk(case: &str) {
 }
 
 fn check_deep_backquote() {
-    let mut template = LispExp::number(42.0);
+    let mut template = LispExp::form(vec![symbol("unquote"), LispExp::number(42.0)]);
     for index in 0..DEPTH {
-        template = if index % 2 == 0 {
-            LispExp::form(vec![template])
-        } else {
-            LispExp::vec(vec![template])
+        template = match index % 4 {
+            0 => LispExp::form(vec![template]),
+            1 => LispExp::vec(vec![template]),
+            2 => LispExp::cons(template, LispExp::number(0.0)),
+            _ => LispExp::map(HashMap::from([("value".into(), template)])),
         };
     }
 
@@ -252,7 +352,7 @@ fn check_deep_backquote() {
     let mut cursor = &result;
 
     for index in (0..DEPTH).rev() {
-        cursor = match (index % 2, cursor) {
+        cursor = match (index % 4, cursor) {
             (0, LispExp::Cons(cell)) => {
                 assert!(cell.cdr.is_nil());
                 &cell.car
@@ -260,6 +360,14 @@ fn check_deep_backquote() {
             (1, LispExp::Vector(items)) => {
                 assert_eq!(items.len(), 1);
                 &items[0]
+            }
+            (2, LispExp::Cons(cell)) => {
+                assert_eq!(cell.cdr, LispExp::number(0.0));
+                &cell.car
+            }
+            (3, LispExp::Map(items)) => {
+                assert_eq!(items.len(), 1);
+                &items["value"]
             }
             _ => panic!("unexpected container at level {index}"),
         };
