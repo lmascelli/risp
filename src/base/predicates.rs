@@ -182,7 +182,10 @@ fn primitive_functionp<T: LispContext>(
     exact_arity(args, 1)?;
     let is_function = match &args[0] {
         LispExp::Lambda(_) | LispExp::Primitive { .. } | LispExp::Native { .. } => true,
-        LispExp::Symbol(name) => env.get_function(name).is_some(),
+        LispExp::Symbol(name) => matches!(
+            resolve_function(name, &env),
+            Ok(LispExp::Lambda(_) | LispExp::Primitive { .. } | LispExp::Native { .. })
+        ),
         _ => false,
     };
     Ok(LispExp::boolean(is_function))

@@ -643,6 +643,73 @@ mod tests {
     }
 
     #[test]
+    fn functionp_accepts_callables_and_alias_chains_without_executing_them() {
+        let env = env_with_primitives();
+        let callables = [
+            eval_str("(lambda () (error \"must not execute\"))", env.clone()).unwrap(),
+            LispExp::primitive(|_, _, _| panic!("must not execute primitive"), None),
+            LispExp::native(|_, _, _| panic!("must not execute native"), None),
+        ];
+        env.set_function("alias".into(), LispExp::symbol("target".into()));
+        env.set_function("chain".into(), LispExp::symbol("alias".into()));
+
+        for callable in callables {
+            env.set_variable("value".into(), callable.clone());
+            env.set_function("target".into(), callable);
+            for source in [
+                "(functionp value)",
+                "(functionp 'target)",
+                "(functionp 'alias)",
+                "(functionp 'chain)",
+            ] {
+                assert_eq!(eval_str(source, env.clone()), Ok(LispExp::t()), "{source}");
+            }
+        }
+    }
+
+    #[test]
+    fn functionp_rejects_noncallable_bindings_and_missing_alias_targets() {
+        let env = env_with_primitives();
+        env.set_function("alias".into(), LispExp::symbol("target".into()));
+        env.set_function("chain".into(), LispExp::symbol("alias".into()));
+
+        for value in [
+            LispExp::number(42.0),
+            LispExp::nil(),
+            LispExp::string("not callable".into()),
+            LispExp::proper_list(vec![LispExp::number(1.0)]),
+            LispExp::symbol("missing".into()),
+        ] {
+            env.set_variable("value".into(), value.clone());
+            env.set_function("target".into(), value);
+            for source in [
+                "(functionp value)",
+                "(functionp 'target)",
+                "(functionp 'alias)",
+                "(functionp 'chain)",
+            ] {
+                assert_eq!(eval_str(source, env.clone()), Ok(LispExp::nil()), "{source}");
+            }
+        }
+    }
+
+    #[test]
+    fn functionp_rejects_self_and_mutual_alias_cycles() {
+        let env = env_with_primitives();
+        for (name, target) in [("self", "self"), ("a", "b"), ("b", "a"), ("prefix", "a")] {
+            env.set_function(name.into(), LispExp::symbol(target.into()));
+        }
+        for source in [
+            "(functionp 'self)",
+            "(functionp 'a)",
+            "(functionp 'b)",
+            "(functionp 'prefix)",
+        ] {
+            assert_eq!(eval_str(source, env.clone()), Ok(LispExp::nil()), "{source}");
+        }
+    }
+
+    #[test]
     fn predicates_agree_with_the_actual_runtime_type() {
         assert_eq!(eval_ok("(consp '(1))"), LispExp::t());
         assert_eq!(eval_ok("(consp nil)"), LispExp::nil());
