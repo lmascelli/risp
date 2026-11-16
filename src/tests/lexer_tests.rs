@@ -39,6 +39,66 @@ mod test {
     }
 
     #[test]
+    fn symbol_reader_delimiters_preserve_adjacent_tokens() {
+        for (suffix, following) in [
+            (
+                r#""value"tail"#,
+                vec![Token::String("value".into()), Token::Symbol("tail".into())],
+            ),
+            ("'tail", vec![Token::Quote, Token::Symbol("tail".into())]),
+            ("`tail", vec![Token::BackQuote, Token::Symbol("tail".into())]),
+            (",tail", vec![Token::Comma, Token::Symbol("tail".into())]),
+            (",@tail", vec![Token::CommaAt, Token::Symbol("tail".into())]),
+        ] {
+            for symbol in ["head", "123abc", "+foo", ".foo", "1efoo"] {
+                let source = format!("{symbol}{suffix}");
+                let mut expected = vec![Token::Symbol(symbol.into())];
+                expected.extend(following.clone());
+                assert_eq!(lex_all(&source), Ok(expected), "{source:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn symbol_cr_and_crlf_boundaries_preserve_comments() {
+        for source in [
+            "left\rright", "left\r\nright", "left; ignored\r\nright",
+            "left\r; ignored\r\nright", "left; ignored\nright",
+        ] {
+            assert_eq!(
+                lex_all(source),
+                Ok(vec![
+                    Token::Symbol("left".into()),
+                    Token::Symbol("right".into()),
+                ]),
+                "{source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn numeric_error_recovery_preserves_reader_delimiters() {
+        for bad in ["1.2.3junk", "1e2.3junk"] {
+            for suffix in [
+                r#""value"tail"#, "'tail", "`tail", ",tail", ",@tail",
+                "'; ignored\r\ntail", "; ignored\r\ntail", "\rtail", "\r\ntail",
+                "()tail", "[]tail", "{}tail",
+            ] {
+                let source = format!("{bad}{suffix}");
+                let mut parser = Parser::new(&source);
+                assert!(matches!(
+                    parser.next_token(),
+                    Err(ParserError::NumberParseError(_))
+                ));
+                for token in lex_all(suffix).unwrap() {
+                    assert_eq!(parser.next_token(), Ok(Some(token)), "{source:?}");
+                }
+                assert_eq!(parser.next_token(), Ok(None), "{source:?}");
+            }
+        }
+    }
+
+    #[test]
     fn test_strings() {
         let input = r#""hello world" "escaped \" quote""#;
         let tokens = lex_all(input).unwrap();

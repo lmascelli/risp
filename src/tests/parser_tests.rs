@@ -145,6 +145,38 @@ mod test {
     }
 
     #[test]
+    fn adjacent_symbol_reader_forms_survive_comments_and_crlf() {
+        let source = "head\"value\"tail'quoted`template,unquoted,@spliced; ignored\r\nlast\rfinal";
+        let prefix = |name: &str, value: &str| {
+            LispExp::form(vec![
+                LispExp::symbol(name.into()),
+                LispExp::symbol(value.into()),
+            ])
+        };
+        let expected = vec![
+            LispExp::symbol("head".into()),
+            LispExp::string("value".into()),
+            LispExp::symbol("tail".into()),
+            prefix("quote", "quoted"),
+            prefix("backquote", "template"),
+            prefix("unquote", "unquoted"),
+            prefix("unquote-splicing", "spliced"),
+            LispExp::symbol("last".into()),
+            LispExp::symbol("final".into()),
+        ];
+        let mut parser = Parser::new(source);
+        for value in &expected {
+            assert_eq!(parser.next::<()>(), Ok(value.clone()));
+        }
+        assert_eq!(parser.next::<()>(), Err(ParserError::VoidExp));
+
+        let list_source = format!("({source})");
+        let mut parser = Parser::new(&list_source);
+        assert_eq!(parser.next::<()>(), Ok(LispExp::form(expected)));
+        assert_eq!(parser.next::<()>(), Err(ParserError::VoidExp));
+    }
+
+    #[test]
     fn test_edge_negative_numbers() {
         let input = "-42 -3.14";
         let mut parser = Parser::new(input);

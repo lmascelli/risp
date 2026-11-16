@@ -347,6 +347,7 @@ impl<'source> Parser<'source> {
             if matches!(
                 c,
                 ' ' | '\t' | '\n' | '\r' | '(' | ')' | '[' | ']' | '{' | '}' | ';'
+                    | '"' | '\'' | '`' | ','
             ) {
                 break;
             }
@@ -481,20 +482,19 @@ impl<'source> Parser<'source> {
                         self.source.next();
                         return Ok(Some(Token::Symbol(token_string)));
                     }
-                    ' ' | '\t' | '\n' => {
+                    ' ' | '\t' | '\n' | '\r' => {
                         let mut token_string = String::new();
                         core::mem::swap(&mut token_string, &mut self.token);
                         self.lexer_state = ParserLexerState::Default;
                         self.source.next();
                         return Ok(Some(Token::Symbol(token_string)));
                     }
-                    '(' | '[' | '{' | ')' | ']' | '}' => {
+                    '(' | '[' | '{' | ')' | ']' | '}' | '"' | '\'' | '`' | ',' => {
                         let mut token_string = String::new();
                         core::mem::swap(&mut token_string, &mut self.token);
                         self.lexer_state = ParserLexerState::Default;
                         return Ok(Some(Token::Symbol(token_string)));
                     }
-                    '\r' => {}
                     _ => {
                         self.token.push(*c);
                     }
