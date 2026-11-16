@@ -5,6 +5,7 @@ use super::{
     VARIABLE_DOCUMENTATION, bind_lambda_args, condition_matches, data_to_form, error_data,
     error_symbol, form_to_data, parse_lambda_params, utils::is_reserved_binding_name,
 };
+use crate::base::resolve_function;
 use std::{cell::Cell, collections::HashMap, sync::Arc};
 
 /// Maximum number of simultaneously active evaluation steps.
@@ -1282,27 +1283,24 @@ fn eval_function_call_step<T: LispContext>(
         evaled_args.push(eval(arg, env.clone(), ctx)?);
     }
 
-    if let Some(func) = env.get_function(symbol) {
-        ctx.push_call_frame(symbol);
-        if let LispExp::Lambda(lambda) = func {
-            let call_frame = Env::new_child(&lambda.env);
-            bind_lambda_args(&lambda, &evaled_args, &call_frame)?;
+    let func = resolve_function(symbol, &env)?;
+    ctx.push_call_frame(symbol);
+    if let LispExp::Lambda(lambda) = func {
+        let call_frame = Env::new_child(&lambda.env);
+        bind_lambda_args(&lambda, &evaled_args, &call_frame)?;
 
-            let step = eval_body_step(&lambda.body, call_frame, ctx, permitted);
-            pop_unless_failed(ctx, &step);
-            step
-        } else if let LispExp::Primitive { pointer, doc: _ } = func {
-            let result = pointer(&evaled_args[..], env.clone(), ctx)?;
-            ctx.pop_call_frame();
-            Ok(EvalStep::Done(result))
-        } else if let LispExp::Native { callback, .. } = func {
-            let result = callback(&evaled_args, env.clone(), ctx)?;
-            ctx.pop_call_frame();
-            Ok(EvalStep::Done(result))
-        } else {
-            Err(EvalError::UncorrectFunctionDefinition)
-        }
+        let step = eval_body_step(&lambda.body, call_frame, ctx, permitted);
+        pop_unless_failed(ctx, &step);
+        step
+    } else if let LispExp::Primitive { pointer, doc: _ } = func {
+        let result = pointer(&evaled_args[..], env.clone(), ctx)?;
+        ctx.pop_call_frame();
+        Ok(EvalStep::Done(result))
+    } else if let LispExp::Native { callback, .. } = func {
+        let result = callback(&evaled_args, env.clone(), ctx)?;
+        ctx.pop_call_frame();
+        Ok(EvalStep::Done(result))
     } else {
-        Err(EvalError::UndefinedFunction(symbol.into()))
+        Err(EvalError::UncorrectFunctionDefinition)
     }
 }

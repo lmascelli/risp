@@ -61,6 +61,70 @@ fn missing_alias_target_reports_its_name() {
     );
 }
 
+fn eval_source(
+    source: &str,
+    env: Arc<Env<Host>>,
+) -> Result<LispExp<Host>, EvalError<Host>> {
+    let form = Parser::new(source)
+        .next::<Host>()
+        .expect("parse test form");
+    eval(&form, env, &Host)
+}
+
+#[test]
+fn named_call_follows_alias_chain() {
+    let env = environment();
+
+    env.set_function("a".into(), LispExp::symbol("b".into()));
+    env.set_function("b".into(), LispExp::symbol("identity".into()));
+
+    assert_eq!(eval_source("(a 42)", env), Ok(LispExp::number(42.0)));
+}
+
+#[test]
+fn named_call_reports_missing_alias_target() {
+    let env = environment();
+
+    env.set_function("a".into(), LispExp::symbol("missing".into()));
+
+    assert_eq!(
+        eval_source("(a)", env.clone()),
+        Err(EvalError::UndefinedFunction("missing".into()))
+    );
+    assert_eq!(
+        eval_source("(unbound)", env),
+        Err(EvalError::UndefinedFunction("unbound".into()))
+    );
+}
+
+#[test]
+fn named_call_through_alias_keeps_tail_calls() {
+    let env = environment();
+
+    eval_source(
+        "(defun countdown (n) (if (= n 0) 42 (down (- n 1))))",
+        env.clone(),
+    )
+    .expect("define countdown");
+    env.set_function("down".into(), LispExp::symbol("countdown".into()));
+
+    // Deep enough to exceed the evaluation depth limit without the trampoline.
+    assert_eq!(
+        eval_source("(down 10000)", env),
+        Ok(LispExp::number(42.0))
+    );
+}
+
+#[test]
+fn named_self_referential_alias_returns_an_error() {
+    assert_cycle_rejected("named-self");
+}
+
+#[test]
+fn named_mutually_recursive_aliases_return_an_error() {
+    assert_cycle_rejected("named-mutual");
+}
+
 #[test]
 fn self_referential_alias_returns_an_error() {
     assert_cycle_rejected("self");
@@ -186,6 +250,19 @@ fn alias_cycle_probe() {
                 .expect("parse mutual-alias call");
 
             eval(&form, env, &Host)
+        }
+
+        "named-self" => {
+            env.set_function("a".into(), LispExp::symbol("a".into()));
+
+            eval_source("(a)", env)
+        }
+
+        "named-mutual" => {
+            env.set_function("a".into(), LispExp::symbol("b".into()));
+            env.set_function("b".into(), LispExp::symbol("a".into()));
+
+            eval_source("(a 42)", env)
         }
 
         _ => panic!("unknown probe case: {case}"),

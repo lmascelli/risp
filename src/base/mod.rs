@@ -240,30 +240,38 @@ pub fn call_callable<T: LispContext>(
         LispExp::Primitive { pointer: f, doc: _ } => f(call_args, env, ctx),
         LispExp::Native { callback, .. } => callback(call_args, env, ctx),
         LispExp::Symbol(name) => {
-            let mut target = env
-                .get_function(name)
-                .ok_or_else(|| {
-                    EvalError::UndefinedFunction(name.to_string())
-                })?;
-
-            let mut visited = HashSet::new();
-
-            while let LispExp::Symbol(alias) = &target {
-                if !visited.insert(alias.clone()) {
-                    return Err(EvalError::UncorrectFunctionDefinition);
-                }
-
-                target = env
-                    .get_function(alias)
-                    .ok_or_else(|| {
-                        EvalError::UndefinedFunction(alias.to_string())
-                    })?;
-            }
-
+            let target = resolve_function(name, &env)?;
             call_callable(&target, call_args, env, ctx)
         }
         _ => Err(EvalError::UncorrectFunctionDefinition),
     }
+}
+
+/// Look up `name` in the function namespace and follow symbol aliases.
+///
+/// Returns the first non-symbol binding. A missing link reports its own name;
+/// a cycle reports [`EvalError::UncorrectFunctionDefinition`].
+pub(crate) fn resolve_function<T: LispContext>(
+    name: &str,
+    env: &Env<T>,
+) -> Result<LispExp<T>, EvalError<T>> {
+    let mut target = env
+        .get_function(name)
+        .ok_or_else(|| EvalError::UndefinedFunction(name.to_string()))?;
+
+    let mut visited = HashSet::new();
+
+    while let LispExp::Symbol(alias) = &target {
+        if !visited.insert(alias.clone()) {
+            return Err(EvalError::UncorrectFunctionDefinition);
+        }
+
+        target = env
+            .get_function(alias)
+            .ok_or_else(|| EvalError::UndefinedFunction(alias.to_string()))?;
+    }
+
+    Ok(target)
 }
 
 fn find_assoc<T: LispContext>(
