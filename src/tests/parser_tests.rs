@@ -304,6 +304,46 @@ mod test {
     }
 
     #[test]
+    fn numeric_errors_preserve_comments_and_the_next_expression() {
+        for bad in ["1.2.3junk", "1e2.3junk", "1e309"] {
+            let source = format!("{bad}; ignored\n[.9 +5 1e2]");
+            let mut parser = Parser::new(&source);
+            assert!(matches!(
+                parser.next::<()>(),
+                Err(ParserError::NumberParseError(_))
+            ));
+            assert_eq!(
+                parser.next::<()>(),
+                Ok(LispExp::vec(vec![
+                    LispExp::number(0.9),
+                    LispExp::number(5.0),
+                    LispExp::number(100.0),
+                ]))
+            );
+            for _ in 0..2 {
+                assert_eq!(parser.next::<()>(), Err(ParserError::VoidExp));
+            }
+        }
+    }
+
+    #[test]
+    fn new_number_spellings_obey_the_reader_depth_limit() {
+        use crate::parser::MAX_READ_DEPTH;
+        for atom in [".9", "+5", "1e2"] {
+            let source = format!(
+                "{}{atom}{}",
+                "[".repeat(MAX_READ_DEPTH),
+                "]".repeat(MAX_READ_DEPTH)
+            );
+            assert!(Parser::new(&source).next::<()>().is_ok());
+            assert_eq!(
+                Parser::new(&format!("[{source}]")).next::<()>(),
+                Err(ParserError::TooDeep)
+            );
+        }
+    }
+
+    #[test]
     fn test_parser_robustness_mismatched_interleaved_delimiters() {
         assert_eq!(
             Parser::new("([)]").next::<()>().unwrap_err(),

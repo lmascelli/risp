@@ -65,6 +65,77 @@ mod test {
         );
     }
 
+    fn assert_atom_at_boundaries(atom: &str, expected: Token) {
+        for suffix in ["", " ", "\t", "\n", "\r", "; comment", "()", "[]", "{}"] {
+            let source = format!("{atom}{suffix}");
+            let mut parser = Parser::new(&source);
+            assert_eq!(parser.next_token(), Ok(Some(expected.clone())), "{source:?}");
+            for token in lex_all(suffix).unwrap() {
+                assert_eq!(parser.next_token(), Ok(Some(token)), "{source:?}");
+            }
+            for _ in 0..2 {
+                assert_eq!(parser.next_token(), Ok(None), "{source:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_complete_number_grammar() {
+        for (source, value) in [
+            (".9", 0.9),
+            ("+.9", 0.9),
+            ("-.9", -0.9),
+            ("+5", 5.0),
+            ("-5", -5.0),
+            ("5.", 5.0),
+            ("1e3", 1000.0),
+            ("1E+2", 100.0),
+            ("2.5e-3", 0.0025),
+            ("+.9e+2", 90.0),
+            ("-.9E-2", -0.009),
+            ("1.e2", 100.0),
+            ("1.7976931348623157e308", f64::MAX),
+            ("5e-324", f64::from_bits(1)),
+            ("1e-999", 0.0),
+        ] {
+            assert_atom_at_boundaries(source, Token::Number(value));
+        }
+    }
+
+    #[test]
+    fn test_incomplete_exponents_and_alphanumeric_symbols() {
+        for source in [
+            "+", "-", "1+", "1-", "1-2", "inf", "NaN", "e5", "abc123",
+            "123abc", "1.5a", "+5foo", ".9foo", "1e3foo", "1e309foo", "1e", "1E",
+            "1e+", "1e-", "+1E+", "-.9e-", "1.e", "1e++2",
+        ] {
+            assert_atom_at_boundaries(source, Token::Symbol(source.into()));
+        }
+    }
+
+    #[test]
+    fn test_nonfinite_numbers_are_rejected_without_losing_delimiters() {
+        let huge_integer = "9".repeat(400);
+        let huge_decimal = format!("{huge_integer}.0");
+        for atom in ["1e309", "-1e309", "+1E309", "1.8e308", &huge_integer, &huge_decimal] {
+            for suffix in ["", " ", "; comment\n7", "() 7", "[] 7", "{} 7"] {
+                let source = format!("{atom}{suffix}");
+                let mut parser = Parser::new(&source);
+                assert_eq!(
+                    parser.next_token(),
+                    Err(ParserError::NumberParseError(atom.into())),
+                    "{source:?}"
+                );
+                for token in lex_all(suffix).unwrap() {
+                    assert_eq!(parser.next_token(), Ok(Some(token)), "{source:?}");
+                }
+                for _ in 0..2 {
+                    assert_eq!(parser.next_token(), Ok(None), "{source:?}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_lisp_expression() {
         let input = "(define (add x y) (+ x y)) ";

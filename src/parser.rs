@@ -71,8 +71,9 @@ enum ParserLexerState {
     InString,
     InStringSlash,
     InNumber,
-    InNumberMinusStart,
+    InNumberSignStart,
     InNumberAfterDot,
+    InNumberExponent,
     InDotStart,
 }
 
@@ -353,6 +354,16 @@ impl<'source> Parser<'source> {
         }
     }
 
+    /// An incomplete exponent remains a symbol; an overflowing number is invalid.
+    fn finish_exponent(&mut self) -> Result<Token, ParserError> {
+        let token = std::mem::take(&mut self.token);
+        match token.parse::<f64>() {
+            Ok(number) if number.is_finite() => Ok(Token::Number(number)),
+            Ok(_) => Err(ParserError::NumberParseError(token)),
+            Err(_) => Ok(Token::Symbol(token)),
+        }
+    }
+
     pub(super) fn next_token(&mut self) -> Result<Option<Token>, ParserError> {
         match self.lex_next_token() {
             Ok(token) => Ok(token),
@@ -439,9 +450,9 @@ impl<'source> Parser<'source> {
                     '"' => {
                         self.lexer_state = ParserLexerState::InString;
                     }
-                    '-' => {
+                    '+' | '-' => {
                         self.token.push(*c);
-                        self.lexer_state = ParserLexerState::InNumberMinusStart;
+                        self.lexer_state = ParserLexerState::InNumberSignStart;
                     }
                     '0'..='9' => {
                         self.token.push(*c);
@@ -539,7 +550,9 @@ impl<'source> Parser<'source> {
                     ';' => {
                         let mut token_string = String::new();
                         core::mem::swap(&mut token_string, &mut self.token);
-                        if let Ok(number) = token_string.parse() {
+                        if let Some(number) =
+                            token_string.parse::<f64>().ok().filter(|n| n.is_finite())
+                        {
                             self.lexer_state = ParserLexerState::InComment;
                             return Ok(Some(Token::Number(number)));
                         } else {
@@ -549,6 +562,10 @@ impl<'source> Parser<'source> {
                     '0'..='9' => {
                         self.token.push(*c);
                     }
+                    'e' | 'E' => {
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InNumberExponent;
+                    }
                     '.' => {
                         self.token.push(*c);
                         self.lexer_state = ParserLexerState::InNumberAfterDot;
@@ -556,7 +573,9 @@ impl<'source> Parser<'source> {
                     '(' | '[' | '{' | ')' | ']' | '}' => {
                         let mut token_string = String::new();
                         core::mem::swap(&mut token_string, &mut self.token);
-                        if let Ok(number) = token_string.parse() {
+                        if let Some(number) =
+                            token_string.parse::<f64>().ok().filter(|n| n.is_finite())
+                        {
                             self.lexer_state = ParserLexerState::Default;
                             return Ok(Some(Token::Number(number)));
                         } else {
@@ -566,7 +585,9 @@ impl<'source> Parser<'source> {
                     ' ' | '\t' | '\n' | '\r' => {
                         let mut token_string = String::new();
                         core::mem::swap(&mut token_string, &mut self.token);
-                        if let Ok(number) = token_string.parse() {
+                        if let Some(number) =
+                            token_string.parse::<f64>().ok().filter(|n| n.is_finite())
+                        {
                             self.lexer_state = ParserLexerState::Default;
                             self.source.next();
                             return Ok(Some(Token::Number(number)));
@@ -579,7 +600,7 @@ impl<'source> Parser<'source> {
                         self.lexer_state = ParserLexerState::InSymbol;
                     }
                 },
-                ParserLexerState::InNumberMinusStart => match c {
+                ParserLexerState::InNumberSignStart => match c {
                     ';' => {
                         let mut token_string = String::new();
                         core::mem::swap(&mut token_string, &mut self.token);
@@ -615,12 +636,18 @@ impl<'source> Parser<'source> {
                     ';' => {
                         let mut token_string = String::new();
                         core::mem::swap(&mut token_string, &mut self.token);
-                        if let Ok(number) = token_string.parse() {
+                        if let Some(number) =
+                            token_string.parse::<f64>().ok().filter(|n| n.is_finite())
+                        {
                             self.lexer_state = ParserLexerState::InComment;
                             return Ok(Some(Token::Number(number)));
                         } else {
                             return Err(ParserError::NumberParseError(token_string));
                         }
+                    }
+                    'e' | 'E' if self.token.bytes().any(|c| c.is_ascii_digit()) => {
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InNumberExponent;
                     }
                     '0'..='9' => {
                         self.token.push(*c);
@@ -628,7 +655,9 @@ impl<'source> Parser<'source> {
                     '(' | '[' | '{' | ')' | ']' | '}' => {
                         let mut token_string = String::new();
                         core::mem::swap(&mut token_string, &mut self.token);
-                        if let Ok(number) = token_string.parse() {
+                        if let Some(number) =
+                            token_string.parse::<f64>().ok().filter(|n| n.is_finite())
+                        {
                             self.lexer_state = ParserLexerState::Default;
                             return Ok(Some(Token::Number(number)));
                         } else {
@@ -638,7 +667,9 @@ impl<'source> Parser<'source> {
                     ' ' | '\t' | '\n' | '\r' => {
                         let mut token_string = String::new();
                         core::mem::swap(&mut token_string, &mut self.token);
-                        if let Ok(number) = token_string.parse() {
+                        if let Some(number) =
+                            token_string.parse::<f64>().ok().filter(|n| n.is_finite())
+                        {
                             self.lexer_state = ParserLexerState::Default;
                             self.source.next();
                             return Ok(Some(Token::Number(number)));
@@ -646,14 +677,43 @@ impl<'source> Parser<'source> {
                             return Err(ParserError::NumberParseError(token_string));
                         }
                     }
+                    _ if c.is_alphabetic()
+                        && self.token.ends_with(|c: char| c.is_ascii_digit()) =>
+                    {
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InSymbol;
+                    }
                     _ => {
                         self.token.push(*c);
                         return Err(ParserError::NumberParseError(self.token.clone()));
                     }
                 },
 
+                ParserLexerState::InNumberExponent => match c {
+                    '0'..='9' => self.token.push(*c),
+                    '+' | '-' if self.token.ends_with(['e', 'E']) => self.token.push(*c),
+                    ' ' | '\t' | '\n' | '\r' | '(' | ')' | '[' | ']' | '{' | '}' | ';' => {
+                        let in_comment = *c == ';';
+                        let token = self.finish_exponent()?;
+                        self.lexer_state = if in_comment {
+                            ParserLexerState::InComment
+                        } else {
+                            ParserLexerState::Default
+                        };
+                        return Ok(Some(token));
+                    }
+                    '.' => {
+                        self.token.push(*c);
+                        return Err(ParserError::NumberParseError(self.token.clone()));
+                    }
+                    _ => {
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InSymbol;
+                    }
+                },
+
                 ParserLexerState::InDotStart => match c {
-                    '0'..'9' => {
+                    '0'..='9' => {
                         self.token.push(*c);
                         self.lexer_state = ParserLexerState::InNumberAfterDot;
                     }
@@ -722,7 +782,7 @@ impl<'source> Parser<'source> {
             ParserLexerState::InComment => {
                 return Ok(None);
             }
-            ParserLexerState::InSymbol | ParserLexerState::InNumberMinusStart => {
+            ParserLexerState::InSymbol | ParserLexerState::InNumberSignStart => {
                 self.lexer_state = ParserLexerState::Default;
                 let mut token_string = String::new();
                 core::mem::swap(&mut token_string, &mut self.token);
@@ -732,13 +792,20 @@ impl<'source> Parser<'source> {
             ParserLexerState::InNumber | ParserLexerState::InNumberAfterDot => {
                 let mut token_string = String::new();
                 core::mem::swap(&mut token_string, &mut self.token);
-                if let Ok(number) = token_string.parse() {
+                if let Some(number) =
+                    token_string.parse::<f64>().ok().filter(|n| n.is_finite())
+                {
                     self.lexer_state = ParserLexerState::Default;
                     self.source.next();
                     return Ok(Some(Token::Number(number)));
                 } else {
                     return Err(ParserError::NumberParseError(token_string));
                 }
+            }
+            ParserLexerState::InNumberExponent => {
+                let token = self.finish_exponent()?;
+                self.lexer_state = ParserLexerState::Default;
+                return Ok(Some(token));
             }
             ParserLexerState::InDotStart => {
                 self.lexer_state = ParserLexerState::Default;
