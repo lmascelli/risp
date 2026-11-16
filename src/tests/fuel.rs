@@ -164,6 +164,42 @@ mod tests {
     }
 
     #[test]
+    fn member_and_memq_charge_only_visited_cells() {
+        for search in ["member", "memq"] {
+            for (needle, budget, succeeds) in [
+                (1, 1, true),
+                (2, 2, true),
+                (3, 3, true),
+                (9, 3, true),
+                (1, 0, false),
+                (2, 1, false),
+                (9, 2, false),
+            ] {
+                let (env, ctx) = fuel_env(budget);
+                let _scope = ctx.fuel.begin();
+                let LispExp::Primitive { pointer, .. } = env.get_function(search).unwrap() else {
+                    panic!("{search} is not a primitive");
+                };
+                let list = LispExp::proper_list(
+                    (1..=3).map(|n| LispExp::number(n as f64)).collect(),
+                );
+                let result = pointer(&[LispExp::number(needle as f64), list], env.clone(), &ctx);
+                if succeeds {
+                    assert_eq!(result.unwrap().is_nil(), needle == 9, "{search}: {needle}");
+                } else {
+                    assert_eq!(result, Err(EvalError::OutOfFuel), "{search}: {needle}");
+                }
+                assert_eq!(ctx.fuel.consume(1), Err(Exhausted));
+                // An empty list visits no cells, even when the budget is exhausted.
+                assert_eq!(
+                    pointer(&[LispExp::number(1.0), LispExp::nil()], env, &ctx),
+                    Ok(LispExp::nil())
+                );
+            }
+        }
+    }
+
+    #[test]
     fn unwind_protect_does_not_refill_normal_evaluation() {
         let (env, ctx) = fuel_env(50);
         let _scope = ctx.fuel.begin();

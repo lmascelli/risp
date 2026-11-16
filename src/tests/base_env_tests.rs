@@ -430,6 +430,42 @@ mod tests {
     }
 
     #[test]
+    fn member_and_memq_return_the_original_tail() {
+        for search in ["member", "memq"] {
+            for list in ["(1 2 3 2)", "(1 2 3 . 4)"] {
+                assert_eq!(
+                    eval_ok(&format!(
+                        "(let ((xs '{list}))
+                           (list (eq ({search} 1 xs) xs)
+                                 (eq ({search} 2 xs) (cdr xs))
+                                 (eq ({search} 3 xs) (cdr (cdr xs)))))"
+                    )),
+                    eval_ok("'(t t t)"),
+                    "{search}: {list}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn member_and_memq_preserve_list_boundaries() {
+        for search in ["member", "memq"] {
+            for args in ["9 '(1 2 3)", "4 '(1 2 3 . 4)", "1 nil"] {
+                assert_eq!(eval_ok(&format!("({search} {args})")), LispExp::nil());
+            }
+            assert!(matches!(
+                eval_err(&format!("({search} 1 7)")),
+                EvalError::WrongArgumentType { expected, got }
+                    if expected == "List" && got == LispExp::number(7.0)
+            ));
+            assert!(matches!(
+                eval_err(&format!("({search} 1)")),
+                EvalError::WrongNumberOfArguments { expected: 2, got: 1 }
+            ));
+        }
+    }
+
+    #[test]
     fn searches_distinguish_identity_from_structural_equality() {
         for value in [
             "(list 1 2)",

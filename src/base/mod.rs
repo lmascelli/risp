@@ -291,12 +291,22 @@ fn find_member<T: LispContext>(
     matches: impl Fn(&LispExp<T>, &LispExp<T>) -> bool,
 ) -> Result<LispExp<T>, EvalError<T>> {
     exact_arity(args, 2)?;
-    let list = expect_list(&args[1], ctx)?;
-    if let Some(pos) = list.iter().position(|e| matches(e, &args[0])) {
-        Ok(LispExp::proper_list(list[pos..].to_vec()))
-    } else {
-        Ok(LispExp::nil())
+    if !is_list_value(&args[1]) {
+        return Err(EvalError::WrongArgumentType {
+            expected: "List".into(),
+            got: args[1].clone(),
+        });
     }
+    let mut tail = &args[1];
+    while let LispExp::Cons(cell) = tail {
+        charge(ctx, 1)?;
+        if matches(&cell.car, &args[0]) {
+            return Ok(tail.clone());
+        }
+        tail = &cell.cdr;
+    }
+    // As with expect_list, a dotted tail is not a searchable element.
+    Ok(LispExp::nil())
 }
 
 fn compare_chain<T: LispContext>(
