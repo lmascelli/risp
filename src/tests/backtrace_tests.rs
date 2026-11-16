@@ -94,6 +94,26 @@ mod tests {
     }
 
     #[test]
+    fn computed_primitive_pops_on_success_and_retains_failure_frames() {
+        let ctx = BacktraceCtx::new();
+        let env = Env::new_root();
+        setup_base_env(env.clone());
+        env.set_variable("op".into(), env.get_function("car").unwrap());
+        let form = Parser::new("((if t op nil) '(42))").next().unwrap();
+        assert_eq!(eval(&form, env.clone(), &ctx), Ok(LispExp::number(42.0)));
+        assert!(ctx.backtrace().is_empty());
+
+        let form = Parser::new("(progn (defun f () ((if t op nil) 1) 0) (f))")
+            .next()
+            .unwrap();
+        assert!(matches!(
+            eval(&form, env, &ctx),
+            Err(EvalError::WrongArgumentType { .. }),
+        ));
+        assert_eq!(ctx.backtrace(), vec!["<primitive>", "f"]);
+    }
+
+    #[test]
     fn a_primitive_that_evaluates_its_own_nested_expression_stays_on_the_stack() {
         // The primitive remains on the stack while its nested evaluation fails.
         let ctx = BacktraceCtx::new();

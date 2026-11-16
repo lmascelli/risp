@@ -355,6 +355,18 @@ fn eval_step_permitted<T: LispContext>(
                         return step;
                     }
 
+                    LispExp::Primitive { pointer, .. } => {
+                        let mut evaled_args = Vec::with_capacity(list.len() - 1);
+                        for arg in &list[1..] {
+                            evaled_args.push(eval(arg, env.clone(), ctx)?);
+                        }
+
+                        ctx.push_call_frame("<primitive>");
+                        let result = pointer(&evaled_args, env.clone(), ctx)?;
+                        ctx.pop_call_frame();
+                        Ok(EvalStep::Done(result))
+                    }
+
                     LispExp::Native { callback, .. } => {
                         let mut evaled_args = Vec::with_capacity(list.len() - 1);
 

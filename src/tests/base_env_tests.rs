@@ -306,6 +306,76 @@ mod tests {
     // Calling conventions: funcall vs. apply/mapcar symbol resolution
 
     #[test]
+    fn computed_primitive_evaluates_head_and_arguments_once_like_funcall() {
+        let env = env_with_primitives();
+        env.set_variable("op".into(), env.get_function("list").unwrap());
+        for call in [
+            "((progn (setq heads (+ heads 1)) op)",
+            "(funcall (progn (setq heads (+ heads 1)) op)",
+        ] {
+            assert_eq!(
+                eval_str(
+                    &format!("\
+                        (setq heads 0 n 0)
+                        (setq result {call}
+                          (progn (setq n (+ n 1)) n)
+                          (progn (setq n (+ n 1)) n)
+                          'unbound '(missing-function) 'nil))
+                        (list result heads n)
+                    "),
+                    env.clone(),
+                ),
+                Ok(eval_ok("'((1 2 unbound (missing-function) nil) 1 2)")),
+            );
+        }
+    }
+
+    #[test]
+    fn computed_primitive_reports_the_same_errors_as_funcall() {
+        let env = env_with_primitives();
+        env.set_variable("op".into(), env.get_function("car").unwrap());
+        for args in ["", "1", "nil nil", "unbound"] {
+            let result = eval_str(&format!("((if t op nil) {args})"), env.clone());
+            assert!(result.is_err());
+            assert_eq!(
+                result,
+                eval_str(&format!("(funcall op {args})"), env.clone()),
+            );
+        }
+    }
+
+    #[test]
+    fn computed_primitive_receives_the_callers_environment_like_funcall() {
+        let env = env_with_primitives();
+        env.set_variable("op".into(), env.get_function("eval").unwrap());
+        for call in ["((if t op nil) '(+ x 2))", "(funcall op '(+ x 2))"] {
+            assert_eq!(
+                eval_str(&format!("(let ((x 40)) {call})"), env.clone()),
+                Ok(LispExp::number(42.0)),
+            );
+        }
+    }
+
+    #[test]
+    fn computed_primitive_preserves_computed_lambda_tail_calls() {
+        let env = env_with_primitives();
+        env.set_variable("add".into(), env.get_function("+").unwrap());
+        env.set_variable("subtract".into(), env.get_function("-").unwrap());
+        assert_eq!(
+            eval_str(
+                "(setq countdown
+                   (lambda (n)
+                     (if (= n 0)
+                         ((if t add nil) 20 22)
+                         ((if t countdown nil) ((if t subtract nil) n 1)))))
+                 ((if t countdown nil) 10000)",
+                env,
+            ),
+            Ok(LispExp::number(42.0)),
+        );
+    }
+
+    #[test]
     fn funcall_apply_and_mapcar_all_resolve_a_symbol_argument() {
         // All three entry points must resolve function symbols consistently.
         assert_eq!(eval_ok("(funcall 'car '(1 2))"), LispExp::number(1.0));
