@@ -429,6 +429,71 @@ mod tests {
         }
     }
 
+    #[test]
+    fn searches_distinguish_identity_from_structural_equality() {
+        for value in [
+            "(list 1 2)",
+            "(cons 1 2)",
+            "(vector 1 2)",
+            "(make-map 'key 1)",
+            "\"ab\"",
+        ] {
+            let setup = format!("(setq x {value}) (setq y {value})");
+            assert_eq!(
+                eval_ok(&format!("{setup} (list (eq x y) (equal x y))")),
+                eval_ok("'(nil t)")
+            );
+            for (search, equal_search, collection, expected) in [
+                ("memq", "member", "(list y 9)", "(list y 9)"),
+                ("assq", "assoc", "(list (cons y 7))", "(cons y 7)"),
+            ] {
+                for (call, result) in [
+                    (format!("({search} x {collection})"), "nil"),
+                    (format!("({equal_search} x {collection})"), expected),
+                    (format!("({search} y {collection})"), expected),
+                ] {
+                    assert_eq!(
+                        eval_ok(&format!("{setup} {call}")),
+                        eval_ok(&format!("{setup} {result}")),
+                        "{value}: {call}"
+                    );
+                }
+            }
+            assert_eq!(
+                eval_ok(&format!("{setup} (memq x (list y x 9))")),
+                eval_ok(&format!("{setup} (list x 9)"))
+            );
+            assert_eq!(
+                eval_ok(&format!("{setup} (assq x (list (cons y 1) (cons x 2)))")),
+                eval_ok(&format!("{setup} (cons x 2)"))
+            );
+            assert_eq!(
+                eval_ok(&format!("{setup} (eq (car (memq x (list x))) x)")),
+                LispExp::t()
+            );
+            assert_eq!(
+                eval_ok(&format!(
+                    "{setup} (setq entry (cons x 7)) (eq (assq x (list entry)) entry)"
+                )),
+                LispExp::t()
+            );
+        }
+    }
+
+    #[test]
+    fn searches_use_eq_value_rules_for_immediate_values() {
+        for value in ["42", "'key", "nil"] {
+            assert_eq!(
+                eval_ok(&format!("(memq {value} (list {value} 9))")),
+                eval_ok(&format!("(list {value} 9)"))
+            );
+            assert_eq!(
+                eval_ok(&format!("(assq {value} (list nil (cons {value} 9)))")),
+                eval_ok(&format!("(cons {value} 9)"))
+            );
+        }
+    }
+
     // Predicates: eq/eql identity vs. equal structural comparison,
     // listp/functionp resolving nil and function-bound symbols
 

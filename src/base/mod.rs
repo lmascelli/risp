@@ -266,7 +266,11 @@ pub fn call_callable<T: LispContext>(
     }
 }
 
-fn find_assoc<T: LispContext>(args: &[LispExp<T>], ctx: &T) -> Result<LispExp<T>, EvalError<T>> {
+fn find_assoc<T: LispContext>(
+    args: &[LispExp<T>],
+    ctx: &T,
+    matches: impl Fn(&LispExp<T>, &LispExp<T>) -> bool,
+) -> Result<LispExp<T>, EvalError<T>> {
     exact_arity(args, 2)?;
     let list = expect_list(&args[1], ctx)?;
     for entry in list {
@@ -274,17 +278,21 @@ fn find_assoc<T: LispContext>(args: &[LispExp<T>], ctx: &T) -> Result<LispExp<T>
             LispExp::Cons(cell) => Some(cell.car.clone()),
             _ => None,
         };
-        if key == Some(args[0].clone()) {
+        if key.as_ref().is_some_and(|key| matches(key, &args[0])) {
             return Ok(entry);
         }
     }
     Ok(LispExp::nil())
 }
 
-fn find_member<T: LispContext>(args: &[LispExp<T>], ctx: &T) -> Result<LispExp<T>, EvalError<T>> {
+fn find_member<T: LispContext>(
+    args: &[LispExp<T>],
+    ctx: &T,
+    matches: impl Fn(&LispExp<T>, &LispExp<T>) -> bool,
+) -> Result<LispExp<T>, EvalError<T>> {
     exact_arity(args, 2)?;
     let list = expect_list(&args[1], ctx)?;
-    if let Some(pos) = list.iter().position(|e| *e == args[0]) {
+    if let Some(pos) = list.iter().position(|e| matches(e, &args[0])) {
         Ok(LispExp::proper_list(list[pos..].to_vec()))
     } else {
         Ok(LispExp::nil())

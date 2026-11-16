@@ -400,14 +400,12 @@ fn primitive_member<T: LispContext>(
     _env: Arc<Env<T>>,
     ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
-    find_member(args, ctx)
+    find_member(args, ctx, |a, b| a == b)
 }
 
 const MEMQ_DOC: &str = "(memq ELEMENT LIST): Return the first sublist of LIST whose \
-                 car matches ELEMENT, or nil if not found. Since this \
-                 implementation's `eq` is structural rather than \
-                 identity-based, `memq` currently behaves the same as \
-                 `member`.\n\n\
+                 car is `eq` to ELEMENT, or nil if not found. Unlike `member`, \
+                 compound values match only when they are the same object.\n\n\
                  Example:\n\
                  (memq 'b '(a b c)) => (b c)";
 
@@ -416,7 +414,7 @@ fn primitive_memq<T: LispContext>(
     _env: Arc<Env<T>>,
     ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
-    find_member(args, ctx)
+    find_member(args, ctx, predicates::is_eq)
 }
 
 const ASSOC_DOC: &str = "(assoc KEY ALIST): Return the first element of ALIST (an \
@@ -431,12 +429,11 @@ fn primitive_assoc<T: LispContext>(
     _env: Arc<Env<T>>,
     ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
-    find_assoc(args, ctx)
+    find_assoc(args, ctx, |a, b| a == b)
 }
 
-const ASSQ_DOC: &str = "(assq KEY ALIST): Like `assoc`, but intended to compare KEY \
-                 with `eq`. As with `memq`, this currently behaves the same as \
-                 `assoc` since `eq` is structural here.\n\n\
+const ASSQ_DOC: &str = "(assq KEY ALIST): Like `assoc`, but compare KEY \
+                 with `eq`. Compound keys match only when they are the same object.\n\n\
                  Example:\n\
                  (assq 'b '((a . 1) (b . 2))) => (b . 2)";
 
@@ -445,7 +442,7 @@ fn primitive_assq<T: LispContext>(
     _env: Arc<Env<T>>,
     ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
-    find_assoc(args, ctx)
+    find_assoc(args, ctx, predicates::is_eq)
 }
 
 const ELT_DOC: &str = "(elt SEQUENCE N): Return the Nth element of SEQUENCE (a list, \

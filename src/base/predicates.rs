@@ -8,7 +8,11 @@ fn primitive_equal_impl<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T
 
 fn primitive_eq_impl<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalError<T>> {
     exact_arity(args, 2)?;
-    let is_eq = match (&args[0], &args[1]) {
+    Ok(LispExp::boolean(is_eq(&args[0], &args[1])))
+}
+
+pub(super) fn is_eq<T: LispContext>(a: &LispExp<T>, b: &LispExp<T>) -> bool {
+    match (a, b) {
         // Numbers and symbols compare by value, even when constructed outside the intern table.
         (LispExp::Number(a), LispExp::Number(b)) => a == b,
         (LispExp::Symbol(a), LispExp::Symbol(b)) => a == b,
@@ -30,8 +34,7 @@ fn primitive_eq_impl<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, 
             Arc::ptr_eq(a, b)
         }
         _ => false,
-    };
-    Ok(LispExp::boolean(is_eq))
+    }
 }
 
 const EQ_DOC: &str = "(eq A B): Return t if A and B are the same object, nil otherwise.\n\n\
