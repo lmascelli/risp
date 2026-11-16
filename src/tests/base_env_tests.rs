@@ -732,6 +732,47 @@ mod tests {
         assert_eq!(eval_ok(script), LispExp::number(2.0));
     }
 
+    #[test]
+    fn fixed_arity_atom_and_fiber_primitives_reject_missing_or_excess_arguments() {
+        for (source, expected, got) in [
+            ("(make-atom)", 1, 0),
+            ("(make-atom 1 2)", 1, 2),
+            ("(deref)", 1, 0),
+            ("(deref (make-atom 1) 2)", 1, 2),
+            ("(reset)", 2, 0),
+            ("(reset (make-atom 1))", 2, 1),
+            ("(reset (make-atom 1) 2 3)", 2, 3),
+            ("(resume)", 1, 0),
+            ("(resume (fiber 1) 2)", 1, 2),
+            ("(fiber-done-p)", 1, 0),
+            ("(fiber-done-p (fiber 1) 2)", 1, 2),
+        ] {
+            assert_eq!(
+                eval_err(source),
+                EvalError::WrongNumberOfArguments { expected, got },
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_arity_rejection_preserves_atom_and_fiber_state() {
+        let env = env_with_primitives();
+        eval_str("(setq a (make-atom 1) f (fiber (yield 2) 3))", env.clone()).unwrap();
+        for (source, expected, got) in [("(reset a 2 3)", 2, 3), ("(resume f 0)", 1, 2)] {
+            assert_eq!(
+                eval_str(source, env.clone()),
+                Err(EvalError::WrongNumberOfArguments { expected, got }),
+                "{source}"
+            );
+        }
+        assert_eq!(eval_str("(deref a)", env.clone()), Ok(LispExp::number(1.0)));
+        assert_eq!(eval_str("(fiber-done-p f)", env.clone()), Ok(LispExp::nil()));
+        assert_eq!(eval_str("(resume f)", env.clone()), Ok(LispExp::number(2.0)));
+        assert_eq!(eval_str("(resume f)", env.clone()), Ok(LispExp::number(3.0)));
+        assert_eq!(eval_str("(fiber-done-p f)", env), Ok(LispExp::t()));
+    }
+
     // Exercise the shared binder through `call_callable`, separately from direct calls.
 
     #[test]

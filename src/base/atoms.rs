@@ -16,16 +16,10 @@ fn primitive_make_atom<T: LispContext>(
     _env: Arc<Env<T>>,
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
-    if args.is_empty() {
-        Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: 0,
-        })
-    } else {
-        Ok(LispExp::Atom(SharedAtom(Arc::new(RwLock::new(
-            args[0].clone(),
-        )))))
-    }
+    exact_arity(args, 1)?;
+    Ok(LispExp::Atom(SharedAtom(Arc::new(RwLock::new(
+        args[0].clone(),
+    )))))
 }
 
 const DEREF_DOC: &str = "(deref ATOM): Return the current value stored in ATOM.\n\n\
@@ -38,24 +32,18 @@ fn primitive_deref<T: LispContext>(
     _env: Arc<Env<T>>,
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
-    if args.is_empty() {
-        Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: 0,
-        })
+    exact_arity(args, 1)?;
+    if let LispExp::Atom(atom_lock) = &args[0] {
+        let guard = atom_lock
+            .0
+            .read()
+            .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
+        Ok(guard.clone())
     } else {
-        if let LispExp::Atom(atom_lock) = &args[0] {
-            let guard = atom_lock
-                .0
-                .read()
-                .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
-            Ok(guard.clone())
-        } else {
-            Err(EvalError::WrongArgumentType {
-                expected: "Atom".into(),
-                got: args[0].clone(),
-            })
-        }
+        Err(EvalError::WrongArgumentType {
+            expected: "Atom".into(),
+            got: args[0].clone(),
+        })
     }
 }
 
@@ -71,30 +59,24 @@ fn primitive_reset<T: LispContext>(
     _env: Arc<Env<T>>,
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
-    if args.len() < 2 {
-        Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        })
-    } else {
-        if let LispExp::Atom(atom_lock) = &args[0] {
-            let new_val = &args[1];
-            let previous = {
-                let mut guard = atom_lock
-                    .0
-                    .write()
-                    .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
-                std::mem::replace(&mut *guard, new_val.clone())
-            };
+    exact_arity(args, 2)?;
+    if let LispExp::Atom(atom_lock) = &args[0] {
+        let new_val = &args[1];
+        let previous = {
+            let mut guard = atom_lock
+                .0
+                .write()
+                .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
+            std::mem::replace(&mut *guard, new_val.clone())
+        };
 
-            drop(previous);
-            Ok(new_val.clone())
-        } else {
-            Err(EvalError::WrongArgumentType {
-                expected: "Atom".into(),
-                got: args[0].clone(),
-            })
-        }
+        drop(previous);
+        Ok(new_val.clone())
+    } else {
+        Err(EvalError::WrongArgumentType {
+            expected: "Atom".into(),
+            got: args[0].clone(),
+        })
     }
 }
 

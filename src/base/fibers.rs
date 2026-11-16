@@ -49,17 +49,12 @@ fn primitive_resume<T: LispContext>(
     _env: Arc<Env<T>>,
     ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
-    let Some(LispExp::Fiber(shared_fiber)) = args.first() else {
-        return match args.first() {
-            None => Err(EvalError::WrongNumberOfArguments {
-                expected: 1,
-                got: 0,
-            }),
-            Some(other) => Err(EvalError::WrongArgumentType {
-                expected: "Fiber".into(),
-                got: other.clone(),
-            }),
-        };
+    exact_arity(args, 1)?;
+    let LispExp::Fiber(shared_fiber) = &args[0] else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "Fiber".into(),
+            got: args[0].clone(),
+        });
     };
 
     let frames = {
@@ -126,12 +121,8 @@ fn primitive_fiber_done_p<T: LispContext>(
     _env: Arc<Env<T>>,
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
-    let Some(exp) = args.first() else {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: 0,
-        });
-    };
+    exact_arity(args, 1)?;
+    let exp = &args[0];
     match exp.fiber_is_done() {
         Some(done) => Ok(LispExp::boolean(done)),
         None => Err(EvalError::WrongArgumentType {
