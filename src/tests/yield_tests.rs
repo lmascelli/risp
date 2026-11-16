@@ -267,6 +267,61 @@ mod tests {
         assert_eq!(ctx.lines(), vec!["resumed"]);
     }
 
+    #[test]
+    fn if_else_yields_resume_without_repeating_forms() {
+        let (env, ctx) = setup();
+        run(
+            r#"(setq f (fiber
+                 (let ((x 40))
+                   (if (progn (log "condition") nil)
+                       (log "then")
+                       (log "first")
+                       (yield x)
+                       (setq x (+ x 1))
+                       (log "second")
+                       (yield x)
+                       (log "last")
+                       (yield (+ x 1)))
+                   (log "after")
+                   x)))"#,
+            &env,
+            &ctx,
+        );
+
+        for (value, expected_log) in [
+            (40.0, vec!["condition", "first"]),
+            (41.0, vec!["condition", "first", "second"]),
+            (42.0, vec!["condition", "first", "second", "last"]),
+        ] {
+            assert_eq!(run("(resume f)", &env, &ctx), number(value));
+            assert_eq!(ctx.lines(), expected_log);
+            assert!(run("(fiber-done-p f)", &env, &ctx).is_nil());
+        }
+        assert_eq!(run("(resume f)", &env, &ctx), number(41.0));
+        assert_eq!(
+            ctx.lines(),
+            vec!["condition", "first", "second", "last", "after"],
+        );
+        assert!(run("(fiber-done-p f)", &env, &ctx).is_truthy());
+    }
+
+    #[test]
+    fn if_else_yields_remain_forbidden_in_value_contexts() {
+        for source in [
+            r#"(if nil 0 (yield (log "unexpected")) 2)"#,
+            r#"(if nil 0 1 (yield (log "unexpected")))"#,
+        ] {
+            let (env, ctx) = setup();
+            assert_eq!(try_run(source, &env, &ctx), Err(EvalError::YieldNotAllowed));
+            run(&format!("(setq f (fiber (+ 1 {source})))"), &env, &ctx);
+            assert_eq!(
+                try_run("(resume f)", &env, &ctx),
+                Err(EvalError::YieldNotAllowed),
+            );
+            assert!(ctx.lines().is_empty());
+        }
+    }
+
     // The boundary
 
     #[test]

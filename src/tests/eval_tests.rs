@@ -510,6 +510,54 @@ mod test {
     }
 
     #[test]
+    fn if_else_runs_all_forms_in_order_and_returns_the_last_value() {
+        let (env, ctx) = setup_env();
+        crate::setup_base_env(env.clone());
+        let form = Parser::new(
+            "(progn
+               (setq checks 0 order 0)
+               (if (progn (setq checks (+ checks 1)) nil)
+                   unselected
+                   (setq order (+ (* order 10) 1))
+                   (setq order (+ (* order 10) 2))
+                   order))",
+        )
+        .next()
+        .unwrap();
+
+        assert_eq!(eval(&form, env.clone(), &ctx), Ok(LispExp::number(12.0)));
+        assert_eq!(env.get_variable("checks"), Some(LispExp::number(1.0)));
+        assert_eq!(env.get_variable("order"), Some(LispExp::number(12.0)));
+    }
+
+    #[test]
+    fn if_else_preserves_branch_selection_and_optional_else() {
+        for (source, expected) in [
+            ("(if t 7 unselected also-unselected)", LispExp::number(7.0)),
+            ("(if nil unselected)", LispExp::nil()),
+            ("(if nil unselected 9)", LispExp::number(9.0)),
+        ] {
+            assert_eq!(eval_script(source), Ok(expected), "{source}");
+        }
+    }
+
+    #[test]
+    fn if_else_stops_at_the_first_error() {
+        let (env, ctx) = setup_env();
+        let form = Parser::new(
+            "(progn (setq x 0) (if nil unselected (setq x 1) missing (setq x 2)))",
+        )
+        .next()
+        .unwrap();
+
+        assert_eq!(
+            eval(&form, env.clone(), &ctx),
+            Err(EvalError::UnboundVariable("missing".into())),
+        );
+        assert_eq!(env.get_variable("x"), Some(LispExp::number(1.0)));
+    }
+
+    #[test]
     fn test_eval_quote_symbol() {
         // Quoting an unbound symbol must not attempt variable lookup.
         let res = eval_script("'unbound-var").unwrap();

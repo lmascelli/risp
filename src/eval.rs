@@ -440,11 +440,8 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 if condition.is_truthy() {
                     Ok(EvalStep::TailCall(args[1].clone(), env.clone()))
                 } else {
-                    if args.len() > 2 {
-                        Ok(EvalStep::TailCall(args[2].clone(), env.clone()))
-                    } else {
-                        Ok(EvalStep::Done(LispExp::symbol("nil".into())))
-                    }
+                    // Else forms are an implicit progn, including resumable statements.
+                    eval_body_step(&args[2..], env, ctx, permitted)
                 }
             }
         }

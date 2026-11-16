@@ -43,6 +43,22 @@ mod test {
     }
 
     #[test]
+    fn if_else_last_form_remains_a_tail_call() {
+        assert_eq!(
+            eval_script(
+                "(setq visited 0)
+                 (defun countdown (n)
+                   (if (= n 0)
+                       42
+                       (setq visited (+ visited 1))
+                       (countdown (- n 1))))
+                 (if (= (countdown 10000) 42) visited -1)"
+            ),
+            Ok(LispExp::number(10000.0)),
+        );
+    }
+
+    #[test]
     fn depth_error_can_be_handled_repeatedly() {
         assert_eq!(
             eval_script(
