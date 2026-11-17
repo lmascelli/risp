@@ -806,7 +806,7 @@ lo tratterà come il primo carattere di un nuovo token.
   header: ([Stato], [Carattere letto → azione]),
   [`Default`], [spazio, tab, `\n`, `\r` → si salta · `;` → `InComment` · `'` → `Quote` · #raw("`") → `BackQuote` · `,` → `Comma`, oppure `CommaAt` se seguita da `@` · `(` `[` `{` → empila l'apertura su `parens_stack` e la emette · `)` `]` `}` → disimpila: se l'apertura corrisponde emette la chiusura, altrimenti `UnbalancedRParen` (o `…RSquared`, `…RBracket`) · `"` → `InString` · `+` `-` → `InNumberSignStart` · cifra → `InNumber` · `.` → `InDotStart` · altro → `InSymbol`],
   [`InComment`], [`\n` → `Default` · ogni altro carattere si salta],
-  [`InSymbol`], [spazio, tab, `\n` → emette `Symbol` e consuma il separatore · parentesi di ogni tipo → emette `Symbol` senza consumare · `;` → emette `Symbol`, poi `InComment` · `\r` → ignorato · altro → si accumula (anche `"`, `'`, `,`)],
+  [`InSymbol`], [spazio, tab, `\n`, `\r` → emette `Symbol` e consuma il separatore · parentesi di ogni tipo, `"`, `'`, #raw("`"), `,` → emette `Symbol` senza consumare, e il carattere comincia il token seguente · `;` → emette `Symbol`, poi `InComment` · altro → si accumula],
   [`InString`], [`"` → emette `String` · `\` → `InStringSlash` · altro → si accumula, a capo compreso],
   [`InStringSlash`], [`\"` e `\\` → il carattere · `\n`, `\t`, `\r` → a capo, tab, ritorno · `\e` → ESC · `\0` → NUL · ogni altro `\x` → si accumulano #emph[entrambi] i caratteri; poi `InString`],
   [`InNumber`], [cifra → si accumula · `.` → `InNumberAfterDot` · `e` `E` → `InNumberExponent` · separatore, parentesi o `;` → converte con `str::parse::<f64>` ed emette `Number`, o `NumberParseError` se il valore non è finito · altro → `InSymbol`],
@@ -823,7 +823,7 @@ per rsedit:
 #ref-table(
   columns: (auto, 1fr),
   header: ([Elemento], [Regola]),
-  [Delimitatori], [Spazio, tabulazione, `\n`, parentesi di ogni tipo; `;` apre un commento fino a fine riga anche attaccato a un simbolo (`foo;commento`).],
+  [Delimitatori], [Spazio, tabulazione, `\n`, `\r`, parentesi di ogni tipo; `;` apre un commento fino a fine riga anche attaccato a un simbolo (`foo;commento`). Anche `"`, `'`, #raw("`") e `,` chiudono un simbolo e cominciano il token seguente: `a'b` è il simbolo `a` seguito da `'b`.],
   [Numeri], [Cifre con un punto facoltativo, eventualmente precedute da `+` o `-`, e un esponente facoltativo, `e` o `E` con un segno facoltativo e delle cifre: `42`, `-3`, `+5`, `1.5`, `.5`, `5.`, `1e3`, `2.5E-3`. Un numero seguito da lettere diventa un simbolo (`1+`, `1.5a`, `1e3x`), come un esponente senza cifre (`1e`, `1e+`). Un valore troppo grande per un `f64` (`1e309`) è un `NumberParseError`; uno troppo piccolo vale `0`. Un secondo punto è un errore: `1.2.3`, `1e2.3`.],
   [`+`, `-`], [Da soli, o seguiti da lettere, sono simboli (`+`, `-`, `->`, `-foo`); seguiti da cifre, o da un punto e cifre, sono numeri.],
   [Stringhe], [Escape riconosciuti: `\"`, `\\`, `\n`, `\t`, `\r`, `\e` (ESC), `\0`. Ogni altro `\x` resta com'è, backslash compreso: così le espressioni regolari possono usare `\b`, `\s`, `\.` con un solo backslash.],
@@ -996,7 +996,7 @@ non può (`Unreadable`). Lavora con una pila esplicita, come la stampa di
 - un simbolo si scrive com'è se il lexer, da solo, lo rilegge come lo stesso
   simbolo (`reads_as_symbol`, che non lo interna); altrimenti è rifiutato,
   perché il lettore non ha escape per i simboli: `a b`, `12`, `.`, il nome
-  vuoto, un nome che comincia con `'` o contiene `;`;
+  vuoto, un nome che contiene `;`, `"`, `'`, #raw("`") o `,`;
 - una chiave di mappa segue la stessa prova, ma se fallisce si scrive come
   stringa, che il lettore accetta come chiave: le mappe sono sempre scrivibili;
 - una `Form` si scrive come la lista che rappresenta e si rilegge come dati;

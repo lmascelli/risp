@@ -289,8 +289,8 @@ CURRENT BEHAVIOR
     one. Map keys are written sorted, bare when they read back as the
     same symbol and quoted otherwise. Functions, atoms, fibers, thread
     handles, infinities and NaN have no read syntax, nor do symbols whose
-    name would read differently, such as "a b", "12", "." or the empty
-    name: the reader has no escape for symbols. prin1-to-string signals
+    name would read differently, such as "a b", "12", ".", "a'b" or the
+    empty name: the reader has no escape for symbols. prin1-to-string signals
     wrong-type-argument with data (readablep PART) for such a PART, and
     for containers nested deeper than the reader's 256 levels with PART
     the whole value. Emacs prints these as #<...> instead. readablep

@@ -132,7 +132,7 @@ mod tests {
     fn symbols_that_read_back_as_themselves_round_trip() {
         for name in [
             "nil", "t", "foo", "foo-bar", "-", "1+", "1-", ":key", "a.b", "->", "*x*", "%", "1a",
-            "a\"b", "#<x>", "a'b",
+            "#<x>",
         ] {
             assert_eq!(round_trip(&LispExp::symbol(name.into())), name);
         }
@@ -359,6 +359,11 @@ mod tests {
             (r#"(intern "'a")"#, "'a"),
             (r#"(intern "a;b")"#, "a;b"),
             (r#"(intern "a(b")"#, "a(b"),
+            // A quote, backquote, comma or string ends a symbol.
+            (r#"(intern "a'b")"#, "a'b"),
+            (r#"(intern "a\"b")"#, "a\"b"),
+            (r#"(intern "a`b")"#, "a`b"),
+            (r#"(intern "a,b")"#, "a,b"),
             (r#"(list 1 [(intern "x y")])"#, "x y"),
         ] {
             let (symbol, data) = signal_of(&format!("(prin1-to-string {source})"));
