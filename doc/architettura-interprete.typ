@@ -768,21 +768,21 @@ farne parte --- una parentesi dopo un simbolo, per esempio --- lo stato torna a
 `Default` #emph[senza] consumarlo: la chiamata successiva lo troverà di nuovo e
 lo tratterà come il primo carattere di un nuovo token.
 
-#canvas(height: 6.4cm)[
+#canvas(height: 7.6cm)[
   #node(8.1cm, 0.5cm, 2.6cm, 0.8cm, [`Default`], fill: paper)
 
   #node(1.2cm, 2.6cm, 2.2cm, 0.8cm, [`InComment`])
   #node(3.7cm, 2.6cm, 2.2cm, 0.8cm, [`InSymbol`])
   #node(6.2cm, 2.6cm, 2.2cm, 0.8cm, [`InString`])
   #node(8.8cm, 2.6cm, 2.2cm, 0.8cm, [`InNumber`])
-  #node(12.0cm, 2.6cm, 3.4cm, 0.8cm, [`InNumberMinusStart`])
+  #node(12.0cm, 2.6cm, 3.4cm, 0.8cm, [`InNumberSignStart`])
   #node(15.3cm, 2.6cm, 2.4cm, 0.8cm, [`InDotStart`])
 
   #carrow((7.0cm, 0.8cm), (1.6cm, 2.2cm), label: [`;`], dx: -10pt)
   #carrow((7.3cm, 0.9cm), (3.9cm, 2.2cm), label: [altro], dx: -12pt)
   #carrow((7.8cm, 0.9cm), (6.4cm, 2.2cm), label: [`"`], dx: -6pt)
   #carrow((8.3cm, 0.9cm), (8.7cm, 2.2cm), label: [cifra], dx: 12pt)
-  #carrow((9.0cm, 0.8cm), (11.6cm, 2.2cm), label: [`-`], dx: 8pt)
+  #carrow((9.0cm, 0.8cm), (11.6cm, 2.2cm), label: [`+` `-`], dx: 10pt)
   #carrow((9.4cm, 0.6cm), (15.0cm, 2.2cm), label: [`.`], dx: 10pt)
 
   #node(6.2cm, 4.5cm, 2.6cm, 0.8cm, [`InStringSlash`])
@@ -792,24 +792,29 @@ lo tratterà come il primo carattere di un nuovo token.
   #node(11.6cm, 4.5cm, 3.2cm, 0.8cm, [`InNumberAfterDot`])
   #carrow((9.0cm, 3.0cm), (10.8cm, 4.1cm), label: [`.`], dx: -8pt)
   #carrow((11.8cm, 3.0cm), (11.7cm, 4.1cm), label: [`.`], dx: 7pt)
-  #carrow((15.2cm, 3.0cm), (12.6cm, 4.1cm), label: [cifra 0–8], dx: 18pt)
+  #carrow((15.2cm, 3.0cm), (12.6cm, 4.1cm), label: [cifra], dx: 14pt)
 
-  #note(0.2cm, 5.3cm)[Ogni stato torna a `Default` quando emette il suo token. Da `InNumberMinusStart` una cifra porta a `InNumber`; dagli stati dei numeri\ una lettera porta a `InSymbol` (`1+`, `->`), tranne da `InNumberAfterDot`, che dà `NumberParseError` (`1.5x`). La tabella sotto è il riferimento completo.]
+  #node(9.2cm, 5.9cm, 3.2cm, 0.8cm, [`InNumberExponent`])
+  #carrow((8.6cm, 3.0cm), (8.6cm, 5.5cm), label: [`e`], dx: -8pt)
+  #carrow((11.0cm, 4.9cm), (10.2cm, 5.5cm), label: [`e`], dx: 8pt)
+
+  #note(0.2cm, 6.8cm)[Ogni stato torna a `Default` quando emette il suo token. Da `InNumberSignStart` una cifra porta a `InNumber`; dagli stati dei numeri\ una lettera porta a `InSymbol` (`1+`, `->`, `1.5a`, `1e3x`). La tabella sotto è il riferimento completo.]
 ]
 
 #ref-table(
   columns: (3.7cm, 1fr),
   header: ([Stato], [Carattere letto → azione]),
-  [`Default`], [spazio, tab, `\n`, `\r` → si salta · `;` → `InComment` · `'` → `Quote` · #raw("`") → `BackQuote` · `,` → `Comma`, oppure `CommaAt` se seguita da `@` · `(` `[` `{` → empila l'apertura su `parens_stack` e la emette · `)` `]` `}` → disimpila: se l'apertura corrisponde emette la chiusura, altrimenti `UnbalancedRParen` (o `…RSquared`, `…RBracket`) · `"` → `InString` · `-` → `InNumberMinusStart` · cifra → `InNumber` · `.` → `InDotStart` · altro → `InSymbol`],
+  [`Default`], [spazio, tab, `\n`, `\r` → si salta · `;` → `InComment` · `'` → `Quote` · #raw("`") → `BackQuote` · `,` → `Comma`, oppure `CommaAt` se seguita da `@` · `(` `[` `{` → empila l'apertura su `parens_stack` e la emette · `)` `]` `}` → disimpila: se l'apertura corrisponde emette la chiusura, altrimenti `UnbalancedRParen` (o `…RSquared`, `…RBracket`) · `"` → `InString` · `+` `-` → `InNumberSignStart` · cifra → `InNumber` · `.` → `InDotStart` · altro → `InSymbol`],
   [`InComment`], [`\n` → `Default` · ogni altro carattere si salta],
   [`InSymbol`], [spazio, tab, `\n` → emette `Symbol` e consuma il separatore · parentesi di ogni tipo → emette `Symbol` senza consumare · `;` → emette `Symbol`, poi `InComment` · `\r` → ignorato · altro → si accumula (anche `"`, `'`, `,`)],
   [`InString`], [`"` → emette `String` · `\` → `InStringSlash` · altro → si accumula, a capo compreso],
   [`InStringSlash`], [`\"` e `\\` → il carattere · `\n`, `\t`, `\r` → a capo, tab, ritorno · `\e` → ESC · `\0` → NUL · ogni altro `\x` → si accumulano #emph[entrambi] i caratteri; poi `InString`],
-  [`InNumber`], [cifra → si accumula · `.` → `InNumberAfterDot` · separatore, parentesi o `;` → converte con `str::parse::<f64>` ed emette `Number` · altro → `InSymbol`],
-  [`InNumberMinusStart`], [cifra → `InNumber` · `.` → `InNumberAfterDot` · separatore, parentesi o `;` → emette `Symbol("-")` · altro → `InSymbol`],
-  [`InNumberAfterDot`], [cifra → si accumula · separatore, parentesi o `;` → converte ed emette `Number` · altro → `NumberParseError`],
-  [`InDotStart`], [cifra da `0` a `8` → `InNumberAfterDot` · separatore, parentesi o `;` → emette `Dot` · altro, compreso `9` → `InSymbol` #rapporto("LET-4")],
-  [fine dell'input], [`Default`, `InComment` → nessun token · `InSymbol`, `InNumberMinusStart` → emette `Symbol` #rapporto("LET-1") · `InNumber`, `InNumberAfterDot` → emette `Number` · `InDotStart` → emette `Dot` · `InString`, `InStringSlash` → `UnclosedString`],
+  [`InNumber`], [cifra → si accumula · `.` → `InNumberAfterDot` · `e` `E` → `InNumberExponent` · separatore, parentesi o `;` → converte con `str::parse::<f64>` ed emette `Number`, o `NumberParseError` se il valore non è finito · altro → `InSymbol`],
+  [`InNumberSignStart`], [cifra → `InNumber` · `.` → `InNumberAfterDot` · separatore, parentesi o `;` → emette `Symbol("+")` o `Symbol("-")` · altro → `InSymbol`],
+  [`InNumberAfterDot`], [cifra → si accumula · `e` `E`, se c'è già una cifra → `InNumberExponent` · separatore, parentesi o `;` → converte ed emette `Number`, o `NumberParseError` se il valore non è finito · lettera dopo una cifra → `InSymbol` · altro → `NumberParseError`],
+  [`InNumberExponent`], [cifra → si accumula · `+` `-` subito dopo la `e` → si accumula · separatore, parentesi o `;` → converte: un valore finito emette `Number`, uno fuori scala `NumberParseError`, un esponente incompleto (`1e`, `1e+`) `Symbol` · `.` → `NumberParseError` · altro → `InSymbol`],
+  [`InDotStart`], [cifra → `InNumberAfterDot` · separatore, parentesi o `;` → emette `Dot` · altro → `InSymbol`],
+  [fine dell'input], [`Default`, `InComment` → nessun token · `InSymbol`, `InNumberSignStart` → emette `Symbol` #rapporto("LET-1") · `InNumber`, `InNumberAfterDot`, `InNumberExponent` → converte come davanti a un separatore · `InDotStart` → emette `Dot` · `InString`, `InStringSlash` → `UnclosedString`],
 )
 
 Da queste regole discendono le convenzioni che contano quando si scrive Lisp
@@ -819,8 +824,8 @@ per rsedit:
   columns: (auto, 1fr),
   header: ([Elemento], [Regola]),
   [Delimitatori], [Spazio, tabulazione, `\n`, parentesi di ogni tipo; `;` apre un commento fino a fine riga anche attaccato a un simbolo (`foo;commento`).],
-  [Numeri], [Cifre con un punto facoltativo, eventualmente precedute da `-`: `42`, `-3`, `1.5`, `.5`. Una cifra seguita da lettere diventa un simbolo (`1+`); `1.5x` è un errore. Non esiste la notazione esponenziale: `1e20` è un simbolo.],
-  [`-`], [Da solo, o seguito da lettere, è un simbolo (`-`, `->`, `-foo`); seguito da cifre è un numero.],
+  [Numeri], [Cifre con un punto facoltativo, eventualmente precedute da `+` o `-`, e un esponente facoltativo, `e` o `E` con un segno facoltativo e delle cifre: `42`, `-3`, `+5`, `1.5`, `.5`, `5.`, `1e3`, `2.5E-3`. Un numero seguito da lettere diventa un simbolo (`1+`, `1.5a`, `1e3x`), come un esponente senza cifre (`1e`, `1e+`). Un valore troppo grande per un `f64` (`1e309`) è un `NumberParseError`; uno troppo piccolo vale `0`. Un secondo punto è un errore: `1.2.3`, `1e2.3`.],
+  [`+`, `-`], [Da soli, o seguiti da lettere, sono simboli (`+`, `-`, `->`, `-foo`); seguiti da cifre, o da un punto e cifre, sono numeri.],
   [Stringhe], [Escape riconosciuti: `\"`, `\\`, `\n`, `\t`, `\r`, `\e` (ESC), `\0`. Ogni altro `\x` resta com'è, backslash compreso: così le espressioni regolari possono usare `\b`, `\s`, `\.` con un solo backslash.],
   [Simboli], [Qualunque sequenza di caratteri che non siano delimitatori: `*scratch*`, `C-x`, `string=`, `&rest`, `:keyword`.],
 )
@@ -958,7 +963,7 @@ ciascuna restituisce.
   [`UnbalancedRParen`, `…RSquared`, `…RBracket`], [Una chiusura che non corrisponde all'ultima apertura sulla `parens_stack`, o una chiusura senza aperture: `)`, `(]`, `[}`.],
   [`UnclosedList`, `UnclosedVector`, `UnclosedMap`], [Il testo finisce prima della chiusura (in uno stato in cui il lexer lo può dire, vedi #rapporto("LET-1")).],
   [`UnclosedString`], [Il testo finisce dentro una stringa.],
-  [`NumberParseError(testo)`], [Il testo di un numero non si converte in `f64`, o un numero con il punto è seguito da una lettera: `1.5x`.],
+  [`NumberParseError(testo)`], [Il testo di un numero ha un valore fuori scala per un `f64` (`1e309`), o un punto di troppo (`1.2.3`, `1e2.3`). Il lettore salta il resto del numero fino al delimitatore successivo, e la lettura riprende da lì.],
   [`UnexpectedDot`], [Un punto all'inizio di una lista `( . a)` o subito prima della chiusura `(a . )`.],
   [`MalformedDottedList`], [Più di un elemento dopo il punto: `(a . b c)`.],
   [`InvalidMapKey`, `MapKeyMissingValue`], [Una chiave che non è un simbolo o una stringa; una chiave senza valore.],
@@ -983,9 +988,9 @@ testo fosse citato: ogni lista diventa una catena di `Cons` e non nasce nessuna
 non può (`Unreadable`). Lavora con una pila esplicita, come la stampa di
 `Debug`, quindi una lista lunga non consuma stack. Le scelte:
 
-- un numero si scrive con `Display` di `f64`, che non usa mai l'esponente (il
-  lexer non lo conosce) e dà le cifre più brevi che si rileggono uguali;
-  infiniti e NaN non hanno sintassi e sono rifiutati;
+- un numero si scrive con `Display` di `f64`, che non usa l'esponente e dà le
+  cifre più brevi che si rileggono uguali; infiniti e NaN non hanno sintassi e
+  sono rifiutati;
 - una stringa usa solo gli escape che il lexer decodifica: `\"`, `\\`, `\n`,
   `\t`, `\r`, `\e`, `\0`; gli altri caratteri restano come sono;
 - un simbolo si scrive com'è se il lexer, da solo, lo rilegge come lo stesso
@@ -2670,7 +2675,7 @@ codice da Emacs deve conoscerle.
   [Valore di `while`], [L'ultima forma eseguita dal corpo.], [Sempre `nil`.],
   [`dolist` con risultato], [La variabile vale ancora l'ultimo elemento.], [La variabile vale `nil`.],
   [Backquote annidato], [Un solo livello.], [Livelli annidati gestiti.],
-  [Numeri], [Solo `f64`; niente `1e20`, niente interi separati.], [Interi e virgola mobile distinti; notazione esponenziale.],
+  [Numeri], [Solo `f64`, niente interi separati; notazione esponenziale.], [Interi e virgola mobile distinti; notazione esponenziale.],
   [Divisione], [`(/ 1 3)` vale `0.333...`.], [Tra interi è intera: `(/ 1 3)` vale `0`.],
   [`%`], [Come `mod`: il segno segue il divisore.], [Resto: il segno segue il dividendo.],
   [Caratteri], [Nessun tipo carattere né sintassi `?a`; `make-string` prende una stringa e ne usa il primo carattere.], [`?a` è l'intero 97; `make-string` prende un carattere.],

@@ -239,7 +239,11 @@ ARGUMENTS AND VALUES
     parameter names.
 
     Numbers are f64 values. This interpreter does not have a separate
-    arbitrary-precision integer type. String positions and lengths count
+    arbitrary-precision integer type. A number is written with an
+    optional sign, an optional decimal point and an optional exponent:
+    42, -3, +5, .5, 1e3, 2.5E-3. One too large for an f64, such as 1e309,
+    is a read error; digits followed by letters, as in 1+ or 1e3x, make a
+    symbol. String positions and lengths count
     Unicode scalar values, not bytes or grapheme clusters. Sequence indices
     start at zero. Vectors and maps have literal syntax; the base library
     does not register functions named vector or make-hash-table.
@@ -281,8 +285,8 @@ CURRENT BEHAVIOR
 
     prin1-to-string writes lists, dotted lists, strings, finite numbers,
     symbols, vectors and maps so that read gives back an equal value.
-    Numbers are written without an exponent, which the reader does not
-    accept. Map keys are written sorted, bare when they read back as the
+    Numbers are written without an exponent, though the reader accepts
+    one. Map keys are written sorted, bare when they read back as the
     same symbol and quoted otherwise. Functions, atoms, fibers, thread
     handles, infinities and NaN have no read syntax, nor do symbols whose
     name would read differently, such as "a b", "12", "." or the empty

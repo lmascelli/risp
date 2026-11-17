@@ -67,8 +67,8 @@ pub fn write_readable<T: LispContext>(exp: &LispExp<T>) -> Result<String, Unread
 
         match value {
             LispExp::Number(n) if n.is_finite() => {
-                // Display never uses an exponent, which the reader lacks, and
-                // prints the shortest digits that parse back to the same f64.
+                // Display prints the shortest digits that parse back to the
+                // same f64, without an exponent.
                 out.push_str(&n.to_string());
             }
             LispExp::String(text) => write_string(&mut out, text),
