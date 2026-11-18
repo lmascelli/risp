@@ -1,56 +1,446 @@
-------------------------------
+RISP — PROMPT PER PROGETTAZIONE E SVILUPPO TOP DOWN GUIDATO
 
-* 18-10-2026
+ISTRUZIONI D'USO
 
-- Definire il ciclo di vita della memoria.
-   Affrontare i cicli fra ambienti, chiusure, fiber e atomi. Il modello deve liberare
-   sia una VM chiusa sia gli oggetti non più raggiungibili durante una sessione;
-   definire anche durata e limiti dell’interner dei simboli.
-- Completare la politica delle risorse.
-   Addebitare il lavoro costoso delle primitive e introdurre limiti configurabili a
-   dimensioni e profondità. Rendere FuelScope non trasferibile fra thread e chiarire
-   la gestione delle quote quando convivono più VM.
-- Uniformare le chiamate.
-   Condividere risoluzione, validazione e invocazione fra chiamate nominate, calcolate,
-   funcall e callback Rust. Coprire uniformemente lambda, Primitive, Native e alias,
-   preservando le chiamate in coda.
-- Correggere le incoerenze del linguaggio.
-   Sistemare la destrutturazione degli argomenti delle macro e il backquote su liste
-   puntate e mappe. Completare poi aggiornamenti delle liste, duplicati, identità
-   di memq/`member`, forme aggiuntive di if e lettura dei numeri.
-- Migliorare parser e diagnostica pubblica.
-   Esportare ParserError, distinguere EOF da input incompleto e associare posizioni
-   agli errori di lettura. Aggiungere Display e std::error::Error, rendendo chiaro
-   come l’host raccoglie e ripulisce la diagnostica.
-- Completare il contratto con l’host.
-   Definire risultati, errori e gestione dei thread creati da spawn; collegare effettivamente
-   ThreadHandle oppure ridurre la superficie incompleta. Valutare controllo dell’host
-   su scheduling, numero dei task e cancellazione.
-- Introdurre la facciata Risp già prevista.
-    Offrire un ingresso unico per inizializzazione, valutazione del sorgente, chiamate,
-    registrazione delle funzioni e configurazione. Verificarlo attraverso esempi e test
-    da un crate esterno.
-    - Creare un punto di accesso unificato all'interprete. Ad esempio una struttura
-    Risp che permetta di essere inizializzata sull'host come
+Incolla il prompt 00 all'inizio della conversazione.
+Poi usa un solo prompt alla volta, secondo il lavoro corrente.
 
-    Risp::new(host)
+Progettazione: 01–06.
+Sviluppo: ripeti 07 → implementazione tua → 08 → 09.
+Approfondimenti: 10–14.
+Cambio di conversazione: 15 → nuova chat → 00 e 16.
+Riduzione del contesto: 17.
 
-    e quindi inferire il tipo generico dell'host e che fornisca queste operazioni:
+Sostituisci i campi [TRA PARENTESI].
+Non incollare tutta la conversazione o tutto il repository:
+fornisci decisioni, obiettivo corrente e soli estratti necessari.
 
-    eval_source(source) -> Result<LispExp, EvalError>
-    eval_form(form: LispExp) -> Result<LispExp, EvalError>
-    call(name, argument) -> Result<LispExp, EvalError>
-    register_function(name, primitive)
 
-- Ottimizzare i costi già misurati.
-    Eliminare le copie degli input nelle primitive sulle stringhe, evitare il Vec<char>
-    completo per piccole sottostringhe e percorrere direttamente le cons per la membership.
-    Successivamente profilare ambienti ed espansioni delle macro, mantenendo separate
-    misure di tempo, fuel e allocazioni.
-- Riordinare codice, documentazione e verifiche.
-    Separare i meccanismi principali dell’evaluator, lexer/parser e distruzione
-    dei contenitori; uniformare nomi e contratti. Aggiornare README e manuali, sistemare
-    i test esclusi, eliminare i duplicati e predisporre CI con test, doctest, formattazione
-    e lint. Tenere distinti nei commit riordino strutturale e correzioni funzionali.
+00 — RUOLI, VINCOLI E METODO
 
-- aggiungere notazione esponenziale per i numberi (tipo 1e20)
+Voglio riscrivere risp, interprete Lisp in Rust, con approccio
+top down. Sarò io a implementare il codice. Tu mi guiderai
+in chat, fornendo dettagli, spiegazioni ed esempi mirati.
+Il repository con il codice è https://github.com/lmascelli/risp.git.
+Il codice attuale è nel branch main.
+
+Regole valide per tutta la conversazione:
+
+- Non modificare il repository, applicare patch, creare branch,
+  commit o push. Non eseguire compilazioni o test.
+- Puoi leggere sorgenti e test pertinenti. Se non sono disponibili,
+  chiedimi soltanto gli estratti necessari.
+- Fornisci firme indicative, pseudocodice e piccoli frammenti.
+  Codice completo o file patch soltanto su mia richiesta.
+- Suggerisci i comandi: li eseguirò io e riporterò i risultati.
+- Manteniamo stabile la versione usata da rsedit. La riscrittura
+  procede separatamente, senza imporre subito una migrazione. Per
+  questo motivo fai affidamento per leggere lo stato dello sviluppo
+  su branch gc-risp.
+- Possiamo riciclare i test del main di risp quando verificano
+  il comportamento desiderato. I bug esistenti non sono specifiche.
+- Distingui fatti verificati, decisioni accettate, proposte
+  e questioni aperte. Non inventare file, firme o verifiche.
+- Procedi per piccoli incrementi completi e verificabili.
+- Progetta ownership, radici e GC dall'inizio.
+- Spiega il perché delle scelte, soprattutto per Rust e memoria.
+- Non ripetere contesto e codice già discussi.
+- Non riaprire decisioni senza un nuovo motivo concreto.
+- Proponi una scelta motivata; confronta alternative solo
+  quando cambiano significativamente il risultato.
+- Chiedi chiarimenti soltanto quando bloccano il passo corrente.
+
+API iniziale da valutare, ancora modificabile:
+
+Risp::new(host)
+eval_source(source)
+eval_form(form)
+call(name, arguments)
+register_function(name, primitive)
+
+Il tipo dell'host deve poter essere inferito dal costruttore.
+Gli argomenti di call sono già valutati.
+
+Formato preferito delle risposte:
+1. Passo o decisione proposta.
+2. Spiegazione dei punti non ovvi.
+3. Indicazioni per la mia implementazione.
+4. Test e criterio di completamento.
+
+Indicativamente 400–700 parole, oltre agli esempi necessari.
+La correttezza e le spiegazioni richieste prevalgono sulla brevità.
+
+
+01 — INVENTARIO E BASE DI RIFERIMENTO
+
+Applica le regole iniziali.
+
+Prima di progettare, aiutami a distinguere:
+- funzionalità essenziali da conservare;
+- comportamenti da cambiare;
+- problemi critici della versione stabile;
+- requisiti degli host;
+- funzionalità rinviabili.
+
+Consulta soltanto struttura, API e test pertinenti.
+Identifica il commit SHA del main effettivamente consultato.
+Se non puoi verificarlo, indicalo come ignoto.
+
+Restituisci un inventario breve e i pochi file utili al passo
+successivo. Non progettare già tutti i sottosistemi.
+
+Mie priorità:
+[PRIORITÀ E PROBLEMI CONOSCIUTI]
+
+
+02 — CONTRATTO DELL'API PUBBLICA
+
+Decisioni già accettate:
+[DECISIONI PERTINENTI]
+
+Definiamo l'API attraverso alcuni esempi d'uso dall'host.
+
+Chiarisci costruzione, stato persistente, valutazione,
+chiamate native, registrazione delle primitive ed errori.
+Distingui sorgente, forma eseguibile e valore runtime.
+
+Spiega quali operazioni richiedono &mut self, cosa possiede
+Risp e quali tipi devono realmente dipendere da H.
+
+Proponi firme indicative ed esempi brevi. Mantieni provvisori
+i dettagli che dipendono dal modello di memoria ancora aperto.
+
+
+03 — OWNERSHIP, RADICI E GC
+
+Contratto e vincoli:
+[CONTRATTO CORRENTE]
+
+Guidami nella scelta del modello di memoria prima dell'evaluator.
+
+Considera valori immediati, heap, riferimenti interni,
+radici dell'host, temporanei, callback, ambienti e closure.
+
+Mostra cosa succede quando l'host conserva un valore,
+esegue altre valutazioni e poi lo riutilizza.
+
+Controlla che i prestiti Rust permettano questa sequenza.
+Non considerare automaticamente sicuri handle copiabili
+senza radicamento.
+
+Definisci identità, valori di un'altra VM, distruzione della VM
+e valori Lisp catturati da callback o conservati nell'host.
+
+Valuta thread e fiber soltanto rispetto ai requisiti concordati.
+Proponi una soluzione principale con invarianti esplicite.
+
+
+04 — SEMANTICA DI VALUTAZIONE ED ERRORI
+
+Decisioni correnti:
+[DECISIONI]
+
+Definiamo il comportamento osservabile di eval_source
+ed eval_form prima di implementarli.
+
+Decidiamo:
+- sorgente vuota e commenti;
+- più forme e risultato finale;
+- fine regolare contro espressione incompleta;
+- errori lessicali, sintattici e di valutazione;
+- effetti già prodotti in caso di errore;
+- parsing preventivo o valutazione progressiva;
+- conseguenze del lookahead;
+- posizioni nella sorgente;
+- errori ordinari e trasferimenti di controllo.
+
+Per ogni scelta mostra un esempio breve.
+Mantieni gli errori strutturati.
+Non promettere rollback non implementati.
+
+
+05 — ARCHITETTURA TOP DOWN
+
+Contratti accettati:
+[API, SEMANTICA E MEMORIA]
+
+Proponi i moduli minimi, le responsabilità e le dipendenze.
+Parti dall'API pubblica e scendi verso le operazioni necessarie.
+
+Mostra il percorso completo di eval_source("42").
+Indica dove risiedono host, stato della VM, parser, valori,
+heap, radici, ambienti, evaluator e primitive.
+
+Non produrre implementazioni complete o astrazioni speculative.
+Distingui i dettagli rinviabili dai contratti necessari subito.
+
+
+06 — ROADMAP PER INCREMENTI COMPLETI
+
+Stato:
+[RIEPILOGO]
+
+Dividi lo sviluppo in piccoli comportamenti verificabili
+dall'API pubblica fino al risultato.
+
+Per ogni incremento indica prerequisiti, moduli coinvolti,
+test di accettazione e criterio di completamento.
+
+Introduci allocazione e radicamento prima che si accumulino
+tipi gestiti. Non rimandare il modello di memoria alla fine.
+
+Colloca thread e fiber secondo i requisiti concordati.
+Dettaglia soltanto il primo incremento; lascia gli altri sintetici.
+
+
+07 — GUIDA AL PROSSIMO INCREMENTO
+
+Stato:
+[RIEPILOGO BREVE]
+
+Incremento:
+[OBIETTIVO]
+
+Codice pertinente:
+[ESTRATTI NECESSARI]
+
+Guidami nell'implementazione: scriverò io il codice.
+
+Fornisci comportamento atteso, invarianti, ordine delle modifiche,
+firme o pseudocodice dei passaggi difficili, spiegazioni su Rust
+e pochi test significativi.
+
+Rimani nel perimetro dell'incremento.
+Se una firma contrasta con il modello di memoria, spiega
+il conflitto prima di proporre una correzione locale.
+
+Concludi con un passo completo che posso implementare e verificare.
+
+
+08 — REVISIONE DELLA MIA IMPLEMENTAZIONE
+
+Obiettivo e invarianti:
+[OBIETTIVO]
+
+Mio codice o diff:
+[CODICE]
+
+Verifiche realmente eseguite:
+[COMANDI E RISULTATI, OPPURE NON ANCORA]
+
+Revisiona correttezza, ownership, GC ed errori.
+
+Riporta prima i problemi bloccanti, con posizione nel codice,
+causa, esempio osservabile e correzione minima.
+
+Non riscrivere tutto il modulo e non proporre refactoring estetici.
+Non considerare eseguiti test di cui non ho fornito il risultato.
+
+Se non trovi problemi, dillo e indica il prossimo controllo utile.
+
+
+09 — CHIUSURA DELL'INCREMENTO
+
+Incremento:
+[OBIETTIVO]
+
+Modifiche:
+[SINTESI]
+
+Verifiche:
+[RISULTATI]
+
+Confronta il risultato con i criteri concordati.
+Distingui completamento verificato, dubbi e lavoro mancante.
+
+Suggerisci solo verifiche ulteriori motivate da dubbi concreti.
+
+Se il passo è completo, proponi il successivo e aggiorna soltanto
+nuove decisioni, funzionalità completate e rischi rilevanti.
+Non iniziare a implementare il passo successivo.
+
+
+10 — RIUSO DEI TEST DEL MAIN DI RISP
+
+Funzionalità:
+[FUNZIONALITÀ]
+
+Nuovo contratto:
+[CONTRATTO]
+
+Riferimento dei test:
+[SHA DEL MAIN, OPPURE DA VERIFICARE]
+
+Esamina soltanto i test pertinenti.
+Per ciascun candidato indica file, nome e revisione letta.
+
+Classifica:
+- riutilizzabile direttamente;
+- adattabile alla nuova API;
+- da correggere perché descrive un comportamento abbandonato;
+- rinviato per funzionalità ancora mancanti.
+
+Preserva input e risultati quando esprimono il contratto desiderato.
+Per i test legati agli interni, conserva l'intento senza imporre
+la vecchia rappresentazione.
+
+Usa lo stile unit test effettivo del repository.
+Non duplicare infrastrutture condivise, come impl già esistenti.
+
+Fornisci in chat il sottoinsieme minimo e gli adattamenti motivati.
+Implementerò io i test. Non cambiare gli attesi solo per farli passare.
+
+
+11 — CONTROLLO DI UN PASSO CHE TOCCA IL GC
+
+Passo corrente:
+[PASSO]
+
+Modello di memoria e codice:
+[DECISIONI ED ESTRATTI]
+
+Segui la vita dei valori dalla creazione alla raccolta.
+Controlla radici, temporanei, allocazioni, errori, callback
+e riferimenti fra gli oggetti coinvolti.
+
+Considera riferimenti di un'altra VM e oggetti già raccolti.
+Includi la concorrenza soltanto se prevista dal contratto.
+
+Proponi pochi test deterministici che forzino la raccolta
+nei punti critici. La memoria RSS non basta a provarne la correttezza.
+
+Distingui raccolta degli oggetti, rilascio delle risorse native
+e distruzione dell'interprete.
+
+
+12 — DEBUG MIRATO
+
+Atteso:
+[COMPORTAMENTO]
+
+Osservato:
+[COMPORTAMENTO]
+
+Comando:
+[COMANDO ESEGUITO]
+
+Errore pertinente:
+[MESSAGGIO COMPLETO]
+
+Codice minimo:
+[ESTRATTO]
+
+Individua la causa più probabile e una correzione minima.
+
+Per errori Rust spiega il vincolo violato.
+Non proporre clone, Arc, unsafe o nuovi trait bound
+come tentativi casuali.
+
+Se mancano informazioni, chiedi l'estratto più utile.
+Non espandere l'analisi a tutto il progetto.
+
+
+13 — CONFRONTO CON LA VERSIONE ATTUALE
+
+Funzionalità comune:
+[FUNZIONALITÀ]
+
+Differenze intenzionali:
+[DIFFERENZE]
+
+Riferimento della versione precedente:
+[SHA]
+
+Proponi pochi programmi significativi da eseguire nelle due versioni.
+Confronta risultati osservabili, non strutture interne.
+
+La versione precedente è un riferimento storico, non un oracolo.
+Classifica le divergenze come bug nuovo, bug precedente,
+differenza intenzionale o specifica ambigua.
+
+Scriverò ed eseguirò io il confronto.
+
+
+14 — SPIEGAZIONE DI UN PUNTO NON CHIARO
+
+Non mi è chiaro:
+[CONCETTO O FRAMMENTO]
+
+Spiegalo nel contesto del nostro interprete con un esempio piccolo.
+Mostra cosa succede durante l'esecuzione e quale invariante protegge.
+
+Definisci brevemente i termini nuovi.
+Non ripetere l'intera architettura.
+Ricollega la spiegazione al passo che sto implementando.
+
+
+15 — RIEPILOGO PER UNA NUOVA CHAT
+
+Prepara un riepilogo autonomo, indicativamente di 300–500 parole:
+
+- Obiettivo e ruoli: implemento io, guida in chat.
+- Vincoli: sola lettura del repository, niente modifiche,
+  comandi di test eseguiti o patch non richieste.
+- Repository, branch e revisioni realmente verificati.
+- Contratto pubblico corrente.
+- Decisioni su semantica, ownership, radici e GC.
+- Funzionalità completate.
+- Ultime verifiche, risultati e revisione cui si riferiscono.
+- Test del main riutilizzati e adattamenti essenziali.
+- Questioni aperte che bloccano il lavoro.
+- Prossimo incremento e criterio di completamento.
+- Soli file o estratti necessari per riprendere.
+
+Non includere la cronologia o codice già disponibile.
+Non presentare proposte come decisioni.
+Indica esplicitamente ciò che è ignoto.
+
+
+16 — RIPRESA DEL LAVORO
+
+Applica le istruzioni iniziali del prompt 00.
+
+Stato precedente:
+[RIEPILOGO GENERATO CON 15]
+
+Novità successive:
+[SOLO NOVITÀ, OPPURE NESSUNA]
+
+Riprendi dal prossimo incremento indicato.
+Non ricominciare la progettazione.
+
+Non assumere che checkout, branch remoto e risultati dei test
+siano rimasti invariati. Verifica solo ciò che serve ora.
+
+Chiedimi soltanto le informazioni mancanti che impediscono
+di proseguire.
+
+
+17 — RIDUZIONE DEL CONTESTO
+
+Concentriamoci esclusivamente su:
+[PROBLEMA CORRENTE]
+
+Riassumi brevemente le decisioni già accettate pertinenti.
+Poi dammi una proposta motivata, il cambiamento minimo
+che implementerò io e il test che lo verifica.
+
+Rinvia gli altri temi in un elenco breve.
+Non riprodurre codice, piani o spiegazioni rimasti invariati.
+
+
+SCHEDA MINIMA DELLO STATO
+
+Obiettivo corrente:
+Decisioni confermate:
+API interessata:
+Invarianti di memoria:
+SHA del main usato per i test:
+Stato del nuovo codice:
+Ultima verifica effettiva:
+Problema aperto:
+Prossimo passo:
+File pertinenti:
+
+Aggiorna solo i campi cambiati.
+Incolla solo quelli necessari al prompt corrente.
