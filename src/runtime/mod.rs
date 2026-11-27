@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct RuntimeId(u64);
+pub(crate) struct RuntimeId(u64);
 
 
 pub struct Runtime {
