@@ -1,4 +1,4 @@
-mod object;
+pub(crate) mod object;
 use crate::runtime::RuntimeId;
 
 struct ObjectRef {

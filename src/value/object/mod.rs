@@ -2,6 +2,12 @@ pub(crate) enum Object {
     String(String),
 }
 
+impl Default for Object {
+    fn default() -> Self {
+        Self::String(String::from("Default string"))
+    }
+}
+
 impl Object {
     pub(crate) fn string(value: String) -> Self {
         Self::String(value)
