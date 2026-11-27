@@ -15,7 +15,7 @@ impl Runtime {
         Self {
             id: loop {
                 let current = NEXT_RUNTIME_ID.load(Ordering::Relaxed);
-                let next = match current.check_add(1) {
+                let next = match current.checked_add(1) {
                     Some(value) => value,
                     None => panic!("Runtime identifiers exhausted"),
                 };
@@ -28,7 +28,7 @@ impl Runtime {
                     Ordering::Relaxed,
                 );
                 match result {
-                    Ok(previous) => break Runtime(previous),
+                    Ok(previous) => break RuntimeId(previous),
                     Err(_) => continue,
                 }
             }
