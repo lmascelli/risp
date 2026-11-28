@@ -15,7 +15,7 @@ DESCRIPTION
     parameters; native signatures are in their documentation strings.
     In rsedit, C-h f on a function name opens its help.
 
-    There are 108 base function names, including aliases, and 28 special
+    There are 111 base function names, including aliases, and 28 special
     form names in this version. Native functions supplied by an embedding
     application are not included.
 
@@ -118,6 +118,9 @@ STRINGS AND TEXT
         string-diff               one replacement turning BEFORE into AFTER
         upcase                    a copy with letters converted to uppercase
         downcase                  a copy with letters converted to lowercase
+        string-trim               a copy without the whitespace at either end
+        string-trim-left          a copy without the whitespace at its start
+        string-trim-right         a copy without the whitespace at its end
         format                    substitute percent directives into a string
 
 NUMBERS, SYMBOL NAMES AND PROPERTIES

@@ -2575,7 +2575,7 @@ impl<T: LispContext> Registry<'_, T> {
   [`math`], [10], [`+`, `-`, `*`, `/`, `mod`, `%`, `abs`, `floor`, `1+`, `1-`],
   [`predicates`], [14], [`eq`, `eql`, `equal`, `null`, `not`, `consp`, `listp`, `stringp`, `numberp`, `symbolp`, `functionp`, `vectorp`, `zerop`, `atom`],
   [`readable`], [3], [`read`, `prin1-to-string`, `readablep`],
-  [`strings`], [14], [`concat`, `substring`, `string=`, `string<`, `string-diff`, `upcase`, `downcase`, `format`, `make-string`, `number-to-string`, `string-to-number`, `symbol-name`, `intern`, `split-string`],
+  [`strings`], [14], [`concat`, `substring`, `string=`, `string<`, `string-diff`, `upcase`, `downcase`, `string-trim`, `string-trim-left`, `string-trim-right`, `format`, `make-string`, `number-to-string`, `string-to-number`, `symbol-name`, `intern`, `split-string`],
   [`symbols`], [2], [`put`, `get`],
 )
 
@@ -2628,6 +2628,7 @@ Le funzioni di aiuto leggono gli argomenti in modo uniforme:
   [`make-string`], [`(make-string N "x")` ripete il #emph[primo carattere] della stringa N volte.],
   [`string-to-number`], [0 per un testo non numerico; usa `f64::from_str`.],
   [`split-string`], [Senza separatori divide sugli spazi bianchi e scarta i pezzi vuoti; con una stringa vuota divide in caratteri; altrimenti divide sulle occorrenze letterali della stringa data (`"::"` è un solo separatore di due caratteri, non due separatori).],
+  [`string-trim`, `string-trim-left`, `string-trim-right`], [Tolgono gli spazi bianchi in testa e in coda, solo in testa o solo in coda, e lasciano quelli interni. Sono gli stessi su cui divide `split-string` senza separatori, cioè i caratteri Unicode `White_Space` (`str::trim`, `trim_start`, `trim_end` e `split_whitespace`), così le primitive vanno d'accordo; `string-trim` è `string-trim-left` di `string-trim-right`.],
   [`intern`, `symbol-name`], [Da stringa a simbolo e ritorno.],
   [`read`], [Legge con `Parser::for_data`, quindi restituisce dati e non valuta nulla. Vuole esattamente un valore nella stringa; `end-of-file` se il testo finisce prima, `invalid-read-syntax` per il resto. Un'unità di carburante per byte.],
   [`json-parse-string`, `json-serialize`], [Chiamano `parse_json` e `write_json`. Un errore di lettura segnala `json-parse-error` con dati `(MESSAGGIO RIGA COLONNA POSIZIONE)`; un valore senza significato JSON segnala `wrong-type-argument` con dati `(json-value-p PARTE)`. Un'unità di carburante per byte.],

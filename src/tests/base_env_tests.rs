@@ -287,6 +287,122 @@ mod tests {
     }
 
     #[test]
+    fn string_trim_takes_the_whitespace_off_both_ends_and_keeps_the_inside() {
+        assert_eq!(
+            eval_ok("(string-trim \" \\t a  b \\n\")"),
+            LispExp::string("a  b".into())
+        );
+        assert_eq!(eval_ok("(string-trim \"ab\")"), LispExp::string("ab".into()));
+    }
+
+    #[test]
+    fn string_trim_of_nothing_but_whitespace_is_empty() {
+        assert_eq!(eval_ok("(string-trim \"  \\t\\n \")"), LispExp::string("".into()));
+        assert_eq!(eval_ok("(string-trim \"\")"), LispExp::string("".into()));
+    }
+
+    #[test]
+    fn string_trim_knows_the_whitespace_split_string_splits_on() {
+        // An ideographic space and a no-break space are Unicode white space.
+        assert_eq!(
+            eval_ok("(string-trim \"\u{3000}città\u{a0}\")"),
+            LispExp::string("città".into())
+        );
+        assert_eq!(
+            eval_ok("(split-string \"\u{3000}città\u{a0}\")"),
+            LispExp::proper_list(vec![LispExp::string("città".into())])
+        );
+    }
+
+    #[test]
+    fn string_trim_wants_one_string() {
+        assert!(matches!(
+            eval_err("(string-trim)"),
+            EvalError::WrongNumberOfArguments { .. }
+        ));
+        assert!(matches!(
+            eval_err("(string-trim \"a\" \"b\")"),
+            EvalError::WrongNumberOfArguments { .. }
+        ));
+        assert!(matches!(
+            eval_err("(string-trim 5)"),
+            EvalError::WrongArgumentType { .. }
+        ));
+    }
+
+    #[test]
+    fn string_trim_left_and_right_each_take_one_end_only() {
+        assert_eq!(
+            eval_ok("(string-trim-left \" \\t a b \\n\")"),
+            LispExp::string("a b \n".into())
+        );
+        assert_eq!(
+            eval_ok("(string-trim-right \" \\t a b \\n\")"),
+            LispExp::string(" \t a b".into())
+        );
+    }
+
+    #[test]
+    fn string_trim_left_and_right_of_nothing_but_whitespace_are_empty() {
+        for name in ["string-trim-left", "string-trim-right"] {
+            assert_eq!(
+                eval_ok(&format!("({name} \"  \\t\\n \")")),
+                LispExp::string("".into()),
+                "{name}"
+            );
+            assert_eq!(
+                eval_ok(&format!("({name} \"\")")),
+                LispExp::string("".into()),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn string_trim_is_string_trim_left_of_string_trim_right() {
+        // The three agree on what whitespace is, Unicode's included.
+        assert_eq!(
+            eval_ok("(string-trim-left (string-trim-right \"\u{3000} città \u{a0}\"))"),
+            eval_ok("(string-trim \"\u{3000} città \u{a0}\")")
+        );
+        assert_eq!(
+            eval_ok("(string-trim-left \"\u{3000}città\")"),
+            LispExp::string("città".into())
+        );
+        assert_eq!(
+            eval_ok("(string-trim-right \"città\u{a0}\")"),
+            LispExp::string("città".into())
+        );
+    }
+
+    #[test]
+    fn string_trim_left_and_right_want_one_string() {
+        for name in ["string-trim-left", "string-trim-right"] {
+            assert!(
+                matches!(
+                    eval_err(&format!("({name})")),
+                    EvalError::WrongNumberOfArguments { .. }
+                ),
+                "{name}"
+            );
+            assert!(
+                matches!(
+                    eval_err(&format!("({name} \"a\" \"b\")")),
+                    EvalError::WrongNumberOfArguments { .. }
+                ),
+                "{name}"
+            );
+            assert!(
+                matches!(
+                    eval_err(&format!("({name} 5)")),
+                    EvalError::WrongArgumentType { .. }
+                ),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn number_to_string_omits_the_decimal_point_for_integral_values() {
         assert_eq!(eval_ok("(number-to-string 5)"), LispExp::string("5".into()));
         assert_eq!(

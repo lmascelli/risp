@@ -294,6 +294,61 @@ fn primitive_split_string<T: LispContext>(
     Ok(LispExp::proper_list(parts))
 }
 
+const STRING_TRIM_DOC: &str = "(string-trim STRING): Return STRING without the whitespace \
+                 at its beginning and at its end; the whitespace inside it stays. Whitespace \
+                 is what `split-string' with no SEPARATORS splits on: spaces, tabs, newlines \
+                 and the rest of Unicode's white space.\n\n\
+                 Example:\n\
+                 (string-trim \"  a  b \\t\\n\") => \"a  b\"\n\
+                 (string-trim \"   \")         => \"\"";
+
+const STRING_TRIM_LEFT_DOC: &str = "(string-trim-left STRING): Return STRING without the \
+                 whitespace at its beginning; the rest stays, the whitespace at its end \
+                 included. Whitespace is what `string-trim' takes off.\n\n\
+                 Example:\n\
+                 (string-trim-left \"  a b  \") => \"a b  \"";
+
+const STRING_TRIM_RIGHT_DOC: &str = "(string-trim-right STRING): Return STRING without the \
+                 whitespace at its end; the rest stays, the whitespace at its beginning \
+                 included. Whitespace is what `string-trim' takes off.\n\n\
+                 Example:\n\
+                 (string-trim-right \"  a b  \") => \"  a b\"";
+
+/// The one STRING argument, with `trim` taken off it.
+///
+/// Not `string_op!`: the trims answer a borrowed slice, not a `String`.
+fn trimmed<T: LispContext>(
+    args: &[LispExp<T>],
+    trim: fn(&str) -> &str,
+) -> Result<LispExp<T>, EvalError<T>> {
+    exact_arity(args, 1)?;
+    Ok(LispExp::string(trim(&expect_string(&args[0])?).to_string()))
+}
+
+fn primitive_string_trim<T: LispContext>(
+    args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError<T>> {
+    trimmed(args, str::trim)
+}
+
+fn primitive_string_trim_left<T: LispContext>(
+    args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError<T>> {
+    trimmed(args, str::trim_start)
+}
+
+fn primitive_string_trim_right<T: LispContext>(
+    args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError<T>> {
+    trimmed(args, str::trim_end)
+}
+
 const FORMAT_DOC: &str = "(format STRING &rest OBJECTS): Format OBJECTS according to \
                  the directives in STRING and return the result. Supports \
                  %s/%S (display), %d (integer, finite and floor truncated), %f (float),\
@@ -375,6 +430,17 @@ pub(super) fn install<T: LispContext>(into: &Registry<T>) {
     into.function("substring", primitive_substring, SUBSTRING_DOC);
     into.function("upcase", primitive_upcase, UPCASE_DOC);
     into.function("downcase", primitive_downcase, DOWNCASE_DOC);
+    into.function("string-trim", primitive_string_trim, STRING_TRIM_DOC);
+    into.function(
+        "string-trim-left",
+        primitive_string_trim_left,
+        STRING_TRIM_LEFT_DOC,
+    );
+    into.function(
+        "string-trim-right",
+        primitive_string_trim_right,
+        STRING_TRIM_RIGHT_DOC,
+    );
     into.function("format", primitive_format, FORMAT_DOC);
     into.function(
         "number-to-string",
